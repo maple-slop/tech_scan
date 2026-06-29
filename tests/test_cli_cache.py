@@ -9,10 +9,10 @@ from tech_scan.cli import scan_target
 from tech_scan.models import FetchResult
 
 
-def args_for(db, provider_data=None, refresh=False):
+def args_for(db, provider_data=None, refresh=False, mode="requests"):
     return argparse.Namespace(
         db=db,
-        mode="requests",
+        mode=mode,
         proxy=None,
         timeout=1,
         concurrency=1,
@@ -83,6 +83,32 @@ class CliCacheTests(unittest.TestCase):
 
             self.assertFalse(refreshed["cached"])
             self.assertEqual(fetch_mock.call_count, 2)
+
+    def test_auto_mode_small_static_response_does_not_call_browser(self):
+        with TemporaryDirectory() as tmpdir:
+            db = Path(tmpdir) / "results.db"
+            fetch = FetchResult(
+                input="example.com",
+                url="https://example.com",
+                final_url="https://example.com",
+                status=200,
+                headers={"server": "example"},
+                cookies={},
+                body="<html><body>Example Domain</body></html>",
+                mode="requests",
+            )
+
+            with patch("tech_scan.cli.fetch_requests", return_value=fetch):
+                with patch("tech_scan.cli.fetch_browser") as browser_mock:
+                    result = scan_target(
+                        "example.com",
+                        args_for(db, mode="auto"),
+                        ["builtin"],
+                        ["builtin"],
+                    )
+
+            self.assertEqual(result["mode"], "requests")
+            browser_mock.assert_not_called()
 
 
 if __name__ == "__main__":

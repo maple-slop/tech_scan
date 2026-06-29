@@ -9,7 +9,9 @@ from tech_scan.fetch import (
     fetch_requests,
     redirect_target,
     same_hostname,
+    should_try_browser,
 )
+from tech_scan.models import FetchResult
 
 
 class FakeResponse:
@@ -220,6 +222,93 @@ class FetchTests(unittest.TestCase):
         self.assertEqual(second.script_srcs, ["https://example.com/app.js"])
         self.assertTrue(playwright.chromium.browser.closed)
         self.assertTrue(playwright.stopped)
+
+    def test_auto_does_not_retry_small_static_html(self):
+        fetch = FetchResult(
+            input="example.com",
+            url="https://example.com",
+            final_url="https://example.com",
+            status=200,
+            headers={"server": "example"},
+            cookies={},
+            body="<html><body>Example Domain</body></html>",
+            mode="requests",
+        )
+
+        self.assertFalse(should_try_browser(fetch, findings_count=0))
+
+    def test_auto_retries_request_errors_and_blocking_statuses(self):
+        errored = FetchResult(
+            input="example.com",
+            url="https://example.com",
+            final_url=None,
+            status=None,
+            headers={},
+            cookies={},
+            body="",
+            mode="requests",
+            error="connection failed",
+        )
+        self.assertTrue(should_try_browser(errored, findings_count=0))
+
+        for status in [401, 403, 429, 503]:
+            with self.subTest(status=status):
+                blocked = FetchResult(
+                    input="example.com",
+                    url="https://example.com",
+                    final_url="https://example.com",
+                    status=status,
+                    headers={},
+                    cookies={},
+                    body="blocked",
+                    mode="requests",
+                )
+                self.assertTrue(should_try_browser(blocked, findings_count=1))
+
+    def test_auto_retries_explicit_javascript_required_text(self):
+        fetch = FetchResult(
+            input="example.com",
+            url="https://example.com",
+            final_url="https://example.com",
+            status=200,
+            headers={},
+            cookies={},
+            body="<html>Please enable JavaScript to continue.</html>",
+            mode="requests",
+        )
+
+        self.assertTrue(should_try_browser(fetch, findings_count=1))
+
+    def test_auto_retries_sparse_spa_shell_without_findings(self):
+        fetch = FetchResult(
+            input="example.com",
+            url="https://example.com",
+            final_url="https://example.com",
+            status=200,
+            headers={},
+            cookies={},
+            body='<html><body><div id="root"></div><script src="/app.js"></script></body></html>',
+            mode="requests",
+            script_srcs=["/app.js"],
+        )
+
+        self.assertTrue(should_try_browser(fetch, findings_count=0))
+        self.assertFalse(should_try_browser(fetch, findings_count=1))
+
+    def test_auto_retries_next_nuxt_markers_when_sparse(self):
+        fetch = FetchResult(
+            input="example.com",
+            url="https://example.com",
+            final_url="https://example.com",
+            status=200,
+            headers={},
+            cookies={},
+            body='<html><script id="__NEXT_DATA__">{}</script></html>',
+            mode="requests",
+        )
+
+        self.assertTrue(should_try_browser(fetch, findings_count=0))
+        self.assertFalse(should_try_browser(fetch, findings_count=1))
 
 
 if __name__ == "__main__":
