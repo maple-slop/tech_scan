@@ -9,7 +9,7 @@ from pathlib import Path
 from .models import FetchResult
 
 
-FETCH_PROFILE_VERSION = "v1"
+FETCH_PROFILE_VERSION = "v2"
 
 
 def default_db_path() -> Path:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 import re
+from urllib.parse import urljoin, urlparse
 
 import requests
 
@@ -47,6 +48,22 @@ def extract_script_srcs(body: str) -> list[str]:
     ]
 
 
+def same_hostname(first_url: str, second_url: str) -> bool:
+    return (urlparse(first_url).hostname or "").lower() == (
+        urlparse(second_url).hostname or ""
+    ).lower()
+
+
+def redirect_target(current_url: str, location: str | None) -> str | None:
+    if not location:
+        return None
+    return urljoin(current_url, location)
+
+
+def is_redirect_status(status_code: int) -> bool:
+    return status_code in {301, 302, 303, 307, 308}
+
+
 def fetch_requests(
     target_input: str, url: str, timeout: float, proxy: str | None
 ) -> FetchResult:
@@ -58,13 +75,24 @@ def fetch_requests(
         if not candidate:
             continue
         try:
-            response = session.get(
-                candidate,
-                headers=BROWSER_HEADERS,
-                timeout=timeout,
-                proxies=proxies,
-                allow_redirects=True,
-            )
+            current_url = candidate
+            response = None
+            for _ in range(10):
+                response = session.get(
+                    current_url,
+                    headers=BROWSER_HEADERS,
+                    timeout=timeout,
+                    proxies=proxies,
+                    allow_redirects=False,
+                )
+                next_url = redirect_target(current_url, response.headers.get("location"))
+                if not is_redirect_status(response.status_code) or not next_url:
+                    break
+                if not same_hostname(candidate, next_url):
+                    break
+                current_url = next_url
+            if response is None:
+                raise requests.RequestException("request failed")
             body = response.text or ""
             return FetchResult(
                 input=target_input,
@@ -140,6 +168,21 @@ def fetch_browser(
         with sync_playwright() as p:
             browser = p.chromium.launch(**launch_args)
             page = browser.new_page(extra_http_headers=BROWSER_HEADERS)
+            blocked_redirect: dict[str, str] = {}
+
+            def limit_main_frame_redirects(route: object, request: object) -> None:
+                request_url = request.url
+                if (
+                    request.is_navigation_request()
+                    and request.frame == page.main_frame
+                    and not same_hostname(url, request_url)
+                ):
+                    blocked_redirect["url"] = request_url
+                    route.abort("blockedbyclient")
+                    return
+                route.continue_()
+
+            page.route("**/*", limit_main_frame_redirects)
             response = page.goto(url, wait_until="networkidle", timeout=timeout * 1000)
             body = page.content()
             globals_result = page.evaluate(
@@ -173,6 +216,9 @@ def fetch_browser(
                 script_srcs=list(script_srcs or []),
             )
     except PlaywrightError as exc:
+        error = str(exc)
+        if "blocked_redirect" in locals() and blocked_redirect.get("url"):
+            error = f"blocked cross-host redirect to {blocked_redirect['url']}"
         return FetchResult(
             input=target_input,
             url=url,
