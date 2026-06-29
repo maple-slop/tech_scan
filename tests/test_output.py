@@ -6,7 +6,14 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from tech_scan.cli import format_human, format_jsonl, main
+from tech_scan.cli import (
+    confidence_color,
+    evidence_color,
+    format_human,
+    format_jsonl,
+    main,
+    origin_display_url,
+)
 
 
 RESULT = {
@@ -95,6 +102,51 @@ class OutputTests(unittest.TestCase):
                         self.assertEqual(main(args), 0)
 
             self.assertIn("\n\n", stdout.getvalue())
+
+    def test_human_first_line_uses_origin_not_redirected_url(self):
+        result = dict(RESULT)
+        result["url"] = "https://example.com/some/long/path?token=abc"
+
+        output = format_human(result, color=False)
+        first_line = output.splitlines()[0]
+
+        self.assertTrue(first_line.startswith("https://example.com/ 200 "))
+        self.assertNotIn("/some/long/path", first_line)
+        self.assertIn("url: https://example.com/some/long/path?token=abc", output)
+        self.assertEqual(origin_display_url(result), "https://example.com/")
+
+    def test_status_code_is_colorized(self):
+        output = format_human(RESULT, color=True)
+
+        self.assertIn("\033[32m200\033[0m", output)
+
+    def test_confidence_color_gets_stronger_for_high_scores(self):
+        self.assertEqual(confidence_color(95), "bright_green")
+        self.assertEqual(confidence_color(80), "green")
+        self.assertEqual(confidence_color(55), "yellow")
+        self.assertEqual(confidence_color(20), "dim")
+
+    def test_evidence_color_varies_by_strength(self):
+        self.assertEqual(evidence_color("server header"), "green")
+        self.assertEqual(evidence_color("react script/html marker"), "yellow")
+        self.assertEqual(evidence_color("php url suffix"), "dim")
+
+    def test_human_evidence_lines_use_strength_colors(self):
+        result = dict(RESULT)
+        result["technologies"] = [
+            {
+                "name": "PHP",
+                "dimension": "backend_framework",
+                "provider": "builtin",
+                "confidence": 70,
+                "evidence": ["php url suffix", "php header"],
+            }
+        ]
+
+        output = format_human(result, color=True)
+
+        self.assertIn("\033[2mphp url suffix\033[0m", output)
+        self.assertIn("\033[32mphp header\033[0m", output)
 
 
 if __name__ == "__main__":

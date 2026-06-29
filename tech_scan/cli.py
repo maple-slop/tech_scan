@@ -7,6 +7,7 @@ import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from .cache import ResponseCache, default_db_path
 from .fetch import fetch_browser, fetch_requests, should_try_browser
@@ -19,6 +20,7 @@ RESET = "\033[0m"
 COLORS = {
     "dim": "\033[2m",
     "green": "\033[32m",
+    "bright_green": "\033[1;32m",
     "yellow": "\033[33m",
     "red": "\033[31m",
     "cyan": "\033[36m",
@@ -226,21 +228,88 @@ def format_jsonl(result: dict[str, Any]) -> str:
     return json.dumps(result, sort_keys=True)
 
 
+def origin_display_url(result: dict[str, Any]) -> str:
+    for value in [result.get("url"), result.get("input")]:
+        if not value:
+            continue
+        text = str(value)
+        parsed = urlparse(text if "://" in text else f"https://{text}")
+        if parsed.scheme and parsed.netloc:
+            return f"{parsed.scheme}://{parsed.netloc}/"
+    return "<unknown>"
+
+
+def status_color(status: object, error: object) -> str:
+    if error:
+        return "red"
+    try:
+        code = int(status)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return "yellow"
+    if 200 <= code < 400:
+        return "green"
+    if 400 <= code < 500:
+        return "yellow"
+    return "red"
+
+
+def confidence_color(confidence: object) -> str:
+    try:
+        score = int(confidence)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return "dim"
+    if score >= 90:
+        return "bright_green"
+    if score >= 75:
+        return "green"
+    if score >= 50:
+        return "yellow"
+    return "dim"
+
+
+def evidence_color(evidence: object) -> str:
+    text = str(evidence).lower()
+    strong_markers = [
+        "header",
+        "cookie",
+        "csrf",
+        "viewstate",
+        "state field",
+        "wappalyzer header",
+        "wappalyzer cookie",
+        "wappalyzer meta",
+        "wappalyzer script",
+    ]
+    weak_markers = [
+        "url suffix",
+        "implied",
+        "generic",
+        "no evidence",
+    ]
+    if any(marker in text for marker in strong_markers):
+        return "green"
+    if any(marker in text for marker in weak_markers):
+        return "dim"
+    if any(marker in text for marker in ["body", "html", "script", "meta", "global", "js", "marker"]):
+        return "yellow"
+    return "yellow"
+
+
 def format_human(result: dict[str, Any], color: bool = True) -> str:
     technologies = result.get("technologies") or []
     tech_names = [str(tech.get("name", "")) for tech in technologies if tech.get("name")]
     summary = ", ".join(tech_names) if tech_names else "no technologies"
-    display_url = result.get("url") or result.get("input") or "<unknown>"
+    display_url = origin_display_url(result)
     status = result.get("status")
     error = result.get("error")
-    status_text = f"[{status}]" if status is not None else "[no status]"
-    status_color = "red" if error else "green" if status and 200 <= int(status) < 400 else "yellow"
+    status_text = str(status) if status is not None else "no status"
+    status_style = status_color(status, error)
 
     lines = [
         " ".join(
             [
                 colorize(str(display_url), "bold", color),
-                colorize(status_text, status_color, color),
+                colorize(status_text, status_style, color),
                 colorize(summary, "cyan", color),
             ]
         )
@@ -249,7 +318,7 @@ def format_human(result: dict[str, Any], color: bool = True) -> str:
         [
             f"  input: {result.get('input')}",
             f"  url: {result.get('url')}",
-            f"  status: {result.get('status')}",
+            f"  status: {colorize(status_text, status_style, color)}",
             f"  mode: {result.get('mode')}",
             f"  providers: {', '.join(result.get('providers') or [])}",
             f"  cached: {result.get('cached')}",
@@ -264,17 +333,19 @@ def format_human(result: dict[str, Any], color: bool = True) -> str:
     lines.append("  technologies:")
     for index, tech in enumerate(technologies, start=1):
         name = colorize(str(tech.get("name")), "bold", color)
+        confidence = tech.get("confidence")
+        confidence_text = colorize(str(confidence), confidence_color(confidence), color)
         lines.append(
             "  "
             f"{index}. {name}: dimension={tech.get('dimension')}, "
-            f"provider={tech.get('provider')}, confidence={tech.get('confidence')}"
+            f"provider={tech.get('provider')}, confidence={confidence_text}"
         )
         evidence = tech.get("evidence") or []
         if evidence:
             for item in evidence:
-                lines.append(f"     evidence: {item}")
+                lines.append(f"     evidence: {colorize(str(item), evidence_color(item), color)}")
         else:
-            lines.append("     evidence: none")
+            lines.append(f"     evidence: {colorize('none', evidence_color('no evidence'), color)}")
     return "\n".join(lines)
 
 
