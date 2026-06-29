@@ -15,11 +15,28 @@ from .normalize import normalize_target
 from .providers import build_providers, merge_findings
 
 
+RESET = "\033[0m"
+COLORS = {
+    "dim": "\033[2m",
+    "green": "\033[32m",
+    "yellow": "\033[33m",
+    "red": "\033[31m",
+    "cyan": "\033[36m",
+    "bold": "\033[1m",
+}
+
+
+def colorize(text: str, color: str, enabled: bool) -> str:
+    if not enabled:
+        return text
+    return f"{COLORS[color]}{text}{RESET}"
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Detect website technologies for domains read from stdin. "
-            "Outputs one JSON object per input line."
+            "Defaults to human-readable output; use --output jsonl for one JSON object per input line."
         ),
         epilog=(
             "Examples: "
@@ -79,6 +96,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--refresh",
         action="store_true",
         help="Ignore cached fetch observations and overwrite them with fresh responses.",
+    )
+    parser.add_argument(
+        "--output",
+        choices=["human", "jsonl"],
+        default="human",
+        help=(
+            "Output format. human prints colorized multi-line blocks; jsonl prints one JSON object "
+            "per input line. Default: human."
+        ),
     )
     parser.add_argument(
         "--provider",
@@ -196,6 +222,68 @@ def scan_target(
     return result
 
 
+def format_jsonl(result: dict[str, Any]) -> str:
+    return json.dumps(result, sort_keys=True)
+
+
+def format_human(result: dict[str, Any], color: bool = True) -> str:
+    technologies = result.get("technologies") or []
+    tech_names = [str(tech.get("name", "")) for tech in technologies if tech.get("name")]
+    summary = ", ".join(tech_names) if tech_names else "no technologies"
+    display_url = result.get("url") or result.get("input") or "<unknown>"
+    status = result.get("status")
+    error = result.get("error")
+    status_text = f"[{status}]" if status is not None else "[no status]"
+    status_color = "red" if error else "green" if status and 200 <= int(status) < 400 else "yellow"
+
+    lines = [
+        " ".join(
+            [
+                colorize(str(display_url), "bold", color),
+                colorize(status_text, status_color, color),
+                colorize(summary, "cyan", color),
+            ]
+        )
+    ]
+    lines.extend(
+        [
+            f"  input: {result.get('input')}",
+            f"  url: {result.get('url')}",
+            f"  status: {result.get('status')}",
+            f"  mode: {result.get('mode')}",
+            f"  providers: {', '.join(result.get('providers') or [])}",
+            f"  cached: {result.get('cached')}",
+            f"  error: {colorize(str(error), 'red', color) if error else None}",
+        ]
+    )
+
+    if not technologies:
+        lines.append("  technologies: none")
+        return "\n".join(lines)
+
+    lines.append("  technologies:")
+    for index, tech in enumerate(technologies, start=1):
+        name = colorize(str(tech.get("name")), "bold", color)
+        lines.append(
+            "  "
+            f"{index}. {name}: dimension={tech.get('dimension')}, "
+            f"provider={tech.get('provider')}, confidence={tech.get('confidence')}"
+        )
+        evidence = tech.get("evidence") or []
+        if evidence:
+            for item in evidence:
+                lines.append(f"     evidence: {item}")
+        else:
+            lines.append("     evidence: none")
+    return "\n".join(lines)
+
+
+def format_result(result: dict[str, Any], output: str, color: bool) -> str:
+    if output == "jsonl":
+        return format_jsonl(result)
+    return format_human(result, color=color)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     providers_requested = args.provider or ["builtin"]
@@ -237,6 +325,9 @@ def main(argv: list[str] | None = None) -> int:
             executor.submit(scan_target, target, args, providers_requested, provider_names)
             for target in targets
         ]
+        color = sys.stdout.isatty() and "NO_COLOR" not in os.environ
         for future in futures:
-            print(json.dumps(future.result(), sort_keys=True), flush=True)
+            print(format_result(future.result(), args.output, color), flush=True)
+            if args.output == "human":
+                print(flush=True)
     return 0

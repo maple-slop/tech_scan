@@ -18,6 +18,7 @@ def args_for(db, provider_data=None, refresh=False):
         concurrency=1,
         cache_ttl=86400,
         refresh=refresh,
+        output="jsonl",
         wappalyzergo_cmd=None,
         wappalyzer_data=provider_data,
     )
