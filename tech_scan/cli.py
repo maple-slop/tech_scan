@@ -10,7 +10,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from .cache import ResponseCache, default_db_path
-from .fetch import fetch_browser, fetch_requests, should_try_browser
+from .fetch import BrowserSession, fetch_browser, fetch_requests, should_try_browser
 from .models import FetchResult
 from .normalize import normalize_target
 from .providers import build_providers, merge_findings
@@ -159,6 +159,7 @@ def scan_target(
     args: argparse.Namespace,
     providers_requested: list[str],
     provider_names: list[str],
+    browser_session: BrowserSession | None = None,
 ) -> dict[str, Any]:
     raw_target = raw_target.strip()
     try:
@@ -186,7 +187,13 @@ def scan_target(
                 if cached_fetch:
                     return cached_fetch
             if mode == "browser":
-                fresh_fetch = fetch_browser(raw_target, target, args.timeout, args.proxy)
+                fresh_fetch = fetch_browser(
+                    raw_target,
+                    target,
+                    args.timeout,
+                    args.proxy,
+                    browser_session,
+                )
             else:
                 fresh_fetch = fetch_requests(raw_target, target, args.timeout, args.proxy)
             cache.set(target, mode, args.proxy, fresh_fetch)
@@ -391,14 +398,40 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     targets = [line.strip() for line in sys.stdin if line.strip()]
-    with ThreadPoolExecutor(max_workers=args.concurrency) as executor:
-        futures = [
-            executor.submit(scan_target, target, args, providers_requested, provider_names)
-            for target in targets
-        ]
+    browser_session = BrowserSession(args.proxy) if args.mode in {"browser", "auto"} else None
+    try:
         color = sys.stdout.isatty() and "NO_COLOR" not in os.environ
-        for future in futures:
-            print(format_result(future.result(), args.output, color), flush=True)
-            if args.output == "human":
-                print(flush=True)
+        if browser_session is not None:
+            for target in targets:
+                result = scan_target(
+                    target,
+                    args,
+                    providers_requested,
+                    provider_names,
+                    browser_session,
+                )
+                print(format_result(result, args.output, color), flush=True)
+                if args.output == "human":
+                    print(flush=True)
+            return 0
+
+        with ThreadPoolExecutor(max_workers=args.concurrency) as executor:
+            futures = [
+                executor.submit(
+                    scan_target,
+                    target,
+                    args,
+                    providers_requested,
+                    provider_names,
+                    browser_session,
+                )
+                for target in targets
+            ]
+            for future in futures:
+                print(format_result(future.result(), args.output, color), flush=True)
+                if args.output == "human":
+                    print(flush=True)
+    finally:
+        if browser_session is not None:
+            browser_session.close()
     return 0

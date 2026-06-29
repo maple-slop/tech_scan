@@ -8,11 +8,9 @@ version = "0.1.0"
 description = "Bug bounty oriented website technology detector"
 requires-python = ">=3.10"
 dependencies = [
+    "playwright>=1.40",
     "requests>=2.31",
 ]
-
-[project.optional-dependencies]
-browser = ["playwright>=1.40"]
 
 [project.scripts]
 tech-scan = "tech_scan.cli:main"

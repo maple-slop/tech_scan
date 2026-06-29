@@ -262,20 +262,15 @@ name = "tech-scan"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "requests" },
-]
-
-[package.optional-dependencies]
-browser = [
     { name = "playwright" },
+    { name = "requests" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "playwright", marker = "extra == 'browser'", specifier = ">=1.40" },
+    { name = "playwright", specifier = ">=1.40" },
     { name = "requests", specifier = ">=2.31" },
 ]
-provides-extras = ["browser"]
 
 [[package]]
 name = "typing-extensions"

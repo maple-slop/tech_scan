@@ -1,7 +1,15 @@
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
+import sys
 
-from tech_scan.fetch import fetch_requests, redirect_target, same_hostname
+from tech_scan.fetch import (
+    BrowserSession,
+    chromium_executable_path,
+    fetch_requests,
+    redirect_target,
+    same_hostname,
+)
 
 
 class FakeResponse:
@@ -21,6 +29,101 @@ class FakeSession:
     def get(self, url, **kwargs):
         self.urls.append(url)
         return self.responses.pop(0)
+
+
+class FakeBrowserResponse:
+    status = 200
+    headers = {"server": "Chromium"}
+
+
+class FakePage:
+    def __init__(self):
+        self.main_frame = object()
+        self.url = "https://example.com/app"
+        self.routes = []
+
+    def route(self, pattern, handler):
+        self.routes.append((pattern, handler))
+
+    def goto(self, url, **kwargs):
+        self.url = url
+        return FakeBrowserResponse()
+
+    def content(self):
+        return '<html><script src="/app.js"></script></html>'
+
+    def evaluate(self, script):
+        if "Object.keys(window)" in script:
+            return ["React"]
+        return ["https://example.com/app.js"]
+
+
+class FakeContext:
+    def __init__(self, browser):
+        self.browser = browser
+        self.page = FakePage()
+        self.closed = False
+
+    def new_page(self):
+        return self.page
+
+    def cookies(self):
+        return [{"name": "sid", "value": "abc"}]
+
+    def close(self):
+        self.closed = True
+
+
+class FakeBrowser:
+    def __init__(self):
+        self.contexts = []
+        self.closed = False
+
+    def new_context(self, **kwargs):
+        context = FakeContext(self)
+        self.contexts.append((context, kwargs))
+        return context
+
+    def close(self):
+        self.closed = True
+
+
+class FakeChromium:
+    def __init__(self):
+        self.launch_args = []
+        self.browser = FakeBrowser()
+
+    def launch(self, **kwargs):
+        self.launch_args.append(kwargs)
+        return self.browser
+
+
+class FakePlaywright:
+    def __init__(self):
+        self.chromium = FakeChromium()
+        self.stopped = False
+
+    def stop(self):
+        self.stopped = True
+
+
+class FakePlaywrightStarter:
+    def __init__(self, playwright):
+        self.playwright = playwright
+
+    def start(self):
+        return self.playwright
+
+
+def install_fake_playwright(playwright):
+    sync_api = SimpleNamespace(sync_playwright=lambda: FakePlaywrightStarter(playwright))
+    return patch.dict(
+        sys.modules,
+        {
+            "playwright": SimpleNamespace(),
+            "playwright.sync_api": sync_api,
+        },
+    )
 
 
 class FetchTests(unittest.TestCase):
@@ -78,6 +181,45 @@ class FetchTests(unittest.TestCase):
         self.assertEqual(result.final_url, "https://example.com")
         self.assertEqual(result.status, 302)
         self.assertEqual(result.body, "")
+
+    def test_chromium_path_prefers_environment(self):
+        with patch.dict("os.environ", {"CHROMIUM_PATH": "/custom/chromium"}):
+            with patch("tech_scan.fetch.os.access", return_value=True):
+                self.assertEqual(chromium_executable_path(), "/custom/chromium")
+
+    def test_chromium_path_uses_system_chromium(self):
+        with patch.dict("os.environ", {}, clear=True):
+            with patch("tech_scan.fetch.os.access", return_value=True):
+                self.assertEqual(chromium_executable_path(), "/usr/bin/chromium")
+
+    def test_chromium_path_falls_back_to_playwright_default(self):
+        with patch.dict("os.environ", {}, clear=True):
+            with patch("tech_scan.fetch.os.access", return_value=False):
+                self.assertIsNone(chromium_executable_path())
+
+    def test_browser_session_reuses_one_browser_with_separate_contexts(self):
+        playwright = FakePlaywright()
+        with install_fake_playwright(playwright):
+            with patch.dict("os.environ", {"CHROMIUM_PATH": "/custom/chromium"}):
+                session = BrowserSession(proxy="http://proxy:8080")
+                first = session.fetch("example.com", "https://example.com", 5)
+                second = session.fetch("example.org", "https://example.org", 5)
+                session.close()
+
+        self.assertEqual(len(playwright.chromium.launch_args), 1)
+        self.assertEqual(
+            playwright.chromium.launch_args[0]["executable_path"],
+            "/custom/chromium",
+        )
+        self.assertEqual(
+            playwright.chromium.launch_args[0]["proxy"],
+            {"server": "http://proxy:8080"},
+        )
+        self.assertEqual(len(playwright.chromium.browser.contexts), 2)
+        self.assertEqual(first.browser_globals, ["React"])
+        self.assertEqual(second.script_srcs, ["https://example.com/app.js"])
+        self.assertTrue(playwright.chromium.browser.closed)
+        self.assertTrue(playwright.stopped)
 
 
 if __name__ == "__main__":

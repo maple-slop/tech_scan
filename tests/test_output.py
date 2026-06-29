@@ -103,6 +103,51 @@ class OutputTests(unittest.TestCase):
 
             self.assertIn("\n\n", stdout.getvalue())
 
+    def test_main_browser_mode_reuses_one_browser_session(self):
+        sessions = []
+
+        class FakeBrowserSession:
+            def __init__(self, proxy):
+                self.proxy = proxy
+                self.closed = False
+                sessions.append(self)
+
+            def close(self):
+                self.closed = True
+
+        def fake_scan_target(target, args, providers_requested, provider_names, browser_session=None):
+            self.assertIs(browser_session, sessions[0])
+            return {
+                "input": target,
+                "url": f"https://{target}/",
+                "status": 200,
+                "mode": "browser",
+                "providers": ["builtin"],
+                "cached": False,
+                "technologies": [],
+                "error": None,
+            }
+
+        with TemporaryDirectory() as tmpdir:
+            args = [
+                "--db",
+                str(Path(tmpdir) / "results.db"),
+                "--mode",
+                "browser",
+                "--output",
+                "jsonl",
+            ]
+            with patch("tech_scan.cli.BrowserSession", FakeBrowserSession):
+                with patch("tech_scan.cli.scan_target", side_effect=fake_scan_target) as scan_mock:
+                    with patch("sys.stdin", io.StringIO("a.example\nb.example\n")):
+                        stdout = io.StringIO()
+                        with redirect_stdout(stdout):
+                            self.assertEqual(main(args), 0)
+
+        self.assertEqual(len(sessions), 1)
+        self.assertTrue(sessions[0].closed)
+        self.assertEqual(scan_mock.call_count, 2)
+
     def test_human_first_line_uses_origin_not_redirected_url(self):
         result = dict(RESULT)
         result["url"] = "https://example.com/some/long/path?token=abc"
