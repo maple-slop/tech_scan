@@ -4,7 +4,7 @@ from collections.abc import Mapping
 import os
 import threading
 
-from tech_scan.models import FetchResult
+from tech_scan.models import FetchResult, ResourceObservation
 
 from .headers import BROWSER_HEADERS
 from .requests import same_hostname
@@ -123,17 +123,29 @@ class BrowserSession:
                 headers: Mapping[str, str] = response.headers if response else {}
                 status = response.status if response else None
                 final_url = page.url
-                return FetchResult(
-                    input=target_input,
+                document = ResourceObservation(
+                    id="document:0",
+                    kind="document",
                     url=url,
                     final_url=final_url,
                     status=status,
                     headers={k.lower(): v for k, v in headers.items()},
                     cookies=cookies,
                     body=body or "",
+                )
+                return FetchResult(
+                    input=target_input,
+                    url=document.url,
+                    final_url=document.final_url,
+                    status=document.status,
+                    headers=document.headers,
+                    cookies=document.cookies,
+                    body=document.body,
                     mode="browser",
                     browser_globals=list(globals_result or []),
                     script_srcs=list(script_srcs or []),
+                    resources=[document],
+                    primary_resource_id=document.id,
                 )
             except Exception as exc:
                 error_text = str(exc)

@@ -141,12 +141,13 @@ class WappalyzerJsonProvider(Provider):
         matched: dict[str, Finding] = {}
         body = fetch.body or ""
         script_srcs = fetch.script_srcs or _extract_script_srcs(body)
+        script_bodies = fetch.script_bodies
         meta = _extract_meta(body)
 
         for app_name, app in self.apps.items():
             if not isinstance(app, dict):
                 continue
-            finding = self._detect_app(app_name, app, fetch, body, script_srcs, meta)
+            finding = self._detect_app(app_name, app, fetch, body, script_srcs, script_bodies, meta)
             if finding:
                 matched[app_name] = finding
 
@@ -162,6 +163,7 @@ class WappalyzerJsonProvider(Provider):
         fetch: FetchResult,
         body: str,
         script_srcs: list[str],
+        script_bodies: list[str],
         meta: dict[str, list[str]],
     ) -> Finding | None:
         dimension = self._dimension_for_app(app_name, app)
@@ -186,7 +188,7 @@ class WappalyzerJsonProvider(Provider):
             app.get("meta"), meta, "wappalyzer meta", evidence
         ))
         confidence = max(confidence, self._match_text_patterns(
-            app.get("js"), fetch.browser_globals, "wappalyzer js", evidence
+            app.get("js"), [*fetch.browser_globals, *script_bodies], "wappalyzer js", evidence
         ))
 
         if not evidence:

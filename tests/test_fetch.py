@@ -17,6 +17,7 @@ from tech_scan.fetchers import (
     same_hostname,
     should_try_browser,
 )
+from tech_scan.fetchers.adblock import is_blocked_script_url
 from tech_scan.models import FetchResult
 
 
@@ -26,6 +27,8 @@ class FakeResponse:
         self.status_code = status_code
         self.headers = headers or {}
         self.text = text
+        self.content = text.encode("utf-8")
+        self.encoding = "utf-8"
         self.cookies = []
 
 
@@ -137,6 +140,10 @@ def install_fake_playwright(playwright):
 
 
 class FetchTests(unittest.TestCase):
+    def test_vendored_adblock_rules_are_available(self):
+        self.assertTrue(is_blocked_script_url("https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js"))
+        self.assertFalse(is_blocked_script_url("https://example.com/static/app.js"))
+
     def test_same_hostname_ignores_scheme_but_not_host(self):
         self.assertTrue(same_hostname("https://example.com", "http://example.com/path"))
         self.assertFalse(same_hostname("https://example.com", "https://www.example.com"))
@@ -205,6 +212,124 @@ class FetchTests(unittest.TestCase):
             {"http": "http://proxy:8080", "https": "http://proxy:8080"},
         )
         self.assertIs(session.kwargs[0]["verify"], False)
+
+    def test_requests_fetches_visible_script_subresources(self):
+        session = FakeSession(
+            [
+                FakeResponse(
+                    "https://example.com/app",
+                    200,
+                    {},
+                    '<script src="/static/app.js"></script>'
+                    '<script src="https://cdn.example.net/lib.js"></script>',
+                ),
+                FakeResponse("https://example.com/static/app.js", 200, {}, "React.version='18.0.0'"),
+                FakeResponse("https://cdn.example.net/lib.js", 200, {}, "window.Vue={}"),
+            ]
+        )
+
+        with patch("tech_scan.fetchers.requests.requests.Session", return_value=session):
+            with patch("tech_scan.fetchers.requests.is_blocked_script_url", return_value=False):
+                result = fetch_requests("example.com", "https://example.com/app", 5, None)
+
+        self.assertEqual(
+            session.urls,
+            [
+                "https://example.com/app",
+                "https://example.com/static/app.js",
+                "https://cdn.example.net/lib.js",
+            ],
+        )
+        self.assertEqual(result.primary_resource.kind, "document")
+        self.assertEqual([resource.kind for resource in result.resources], ["document", "script", "script"])
+        self.assertEqual(result.resources[1].parent_id, result.primary_resource_id)
+        self.assertIn("React.version", result.resources[1].body)
+        self.assertEqual(
+            result.script_srcs,
+            ["https://example.com/static/app.js", "https://cdn.example.net/lib.js"],
+        )
+
+    def test_requests_passes_proxy_and_tls_options_to_script_fetches(self):
+        session = FakeSession(
+            [
+                FakeResponse("https://example.com", 200, {}, '<script src="/app.js"></script>'),
+                FakeResponse("https://example.com/app.js", 200, {}, "ok"),
+            ]
+        )
+
+        with patch("tech_scan.fetchers.requests.requests.Session", return_value=session):
+            with patch("tech_scan.fetchers.requests.is_blocked_script_url", return_value=False):
+                fetch_requests("example.com", "https://example.com", 5, "http://proxy:8080", False)
+
+        self.assertEqual(len(session.kwargs), 2)
+        self.assertEqual(session.kwargs[1]["proxies"], {"http": "http://proxy:8080", "https": "http://proxy:8080"})
+        self.assertIs(session.kwargs[1]["verify"], False)
+
+    def test_requests_records_script_fetch_errors_without_failing_document(self):
+        class ErrorSession(FakeSession):
+            def get(self, url, **kwargs):
+                if url.endswith("/app.js"):
+                    raise RuntimeError("wrong exception")
+                return super().get(url, **kwargs)
+
+        session = ErrorSession(
+            [FakeResponse("https://example.com", 200, {}, '<script src="/app.js"></script>')]
+        )
+
+        with patch("tech_scan.fetchers.requests.requests.Session", return_value=session):
+            with patch("tech_scan.fetchers.requests.is_blocked_script_url", return_value=False):
+                with patch(
+                    "tech_scan.fetchers.requests.requests.RequestException",
+                    Exception,
+                ):
+                    result = fetch_requests("example.com", "https://example.com", 5, None)
+
+        self.assertEqual(result.status, 200)
+        self.assertEqual(result.resources[1].kind, "script")
+        self.assertEqual(result.resources[1].error, "wrong exception")
+
+    def test_requests_does_not_fetch_adblock_filtered_scripts(self):
+        session = FakeSession(
+            [
+                FakeResponse(
+                    "https://example.com",
+                    200,
+                    {},
+                    '<script src="/app.js"></script><script src="/ads/banner.js"></script>',
+                ),
+                FakeResponse("https://example.com/app.js", 200, {}, "ok"),
+            ]
+        )
+
+        def blocked(url):
+            return "/ads/" in url
+
+        with patch("tech_scan.fetchers.requests.requests.Session", return_value=session):
+            with patch("tech_scan.fetchers.requests.is_blocked_script_url", side_effect=blocked):
+                result = fetch_requests("example.com", "https://example.com", 5, None)
+
+        self.assertEqual(session.urls, ["https://example.com", "https://example.com/app.js"])
+        self.assertEqual([resource.url for resource in result.script_resources], ["https://example.com/app.js"])
+
+    def test_requests_stop_script_before_cross_host_redirect(self):
+        session = FakeSession(
+            [
+                FakeResponse("https://example.com", 200, {}, '<script src="/app.js"></script>'),
+                FakeResponse(
+                    "https://example.com/app.js",
+                    302,
+                    {"location": "https://cdn.example.net/app.js"},
+                    "",
+                ),
+            ]
+        )
+
+        with patch("tech_scan.fetchers.requests.requests.Session", return_value=session):
+            with patch("tech_scan.fetchers.requests.is_blocked_script_url", return_value=False):
+                result = fetch_requests("example.com", "https://example.com", 5, None)
+
+        self.assertEqual(session.urls, ["https://example.com", "https://example.com/app.js"])
+        self.assertEqual(result.script_resources[0].status, 302)
 
     def test_requests_uses_http_proxy_for_http_target(self):
         received = []

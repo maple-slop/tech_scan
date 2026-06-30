@@ -1,0 +1,1 @@
+"""Vendored fetcher data."""

@@ -5,7 +5,7 @@ from unittest.mock import patch
 import json
 import subprocess
 
-from tech_scan.models import FetchResult
+from tech_scan.models import FetchResult, ResourceObservation
 from tech_scan.providers import (
     BuiltinProvider,
     WappalyzerGoProvider,
@@ -18,16 +18,28 @@ from tech_scan.providers.wappalyzergo import load_vendored_fingerprints
 
 
 def make_fetch(headers=None, cookies=None, body="", globals_=None, url="https://example.com"):
-    return FetchResult(
-        input="example.com",
+    document = ResourceObservation(
+        id="document:0",
+        kind="document",
         url=url,
         final_url=url,
         status=200,
         headers={k.lower(): v for k, v in (headers or {}).items()},
         cookies=cookies or {},
         body=body,
+    )
+    return FetchResult(
+        input="example.com",
+        url=url,
+        final_url=url,
+        status=200,
+        headers=document.headers,
+        cookies=document.cookies,
+        body=body,
         mode="requests",
         browser_globals=globals_ or [],
+        resources=[document],
+        primary_resource_id=document.id,
     )
 
 
@@ -63,6 +75,44 @@ class ProviderTests(unittest.TestCase):
         detected = BuiltinProvider().detect(fetch)
 
         self.assertLessEqual({"Cloudflare", "Next.js", "React"}, names(detected))
+
+    def test_builtin_detects_frontend_markers_from_script_body(self):
+        document = ResourceObservation(
+            id="document:0",
+            kind="document",
+            url="https://example.com",
+            final_url="https://example.com",
+            status=200,
+            headers={},
+            cookies={},
+            body='<script src="/app.js"></script>',
+        )
+        script = ResourceObservation(
+            id="script:0",
+            parent_id=document.id,
+            kind="script",
+            url="https://example.com/app.js",
+            final_url="https://example.com/app.js",
+            status=200,
+            headers={},
+            cookies={},
+            body="/* react-dom production */",
+        )
+        fetch = FetchResult(
+            input="example.com",
+            url=document.url,
+            final_url=document.final_url,
+            status=document.status,
+            headers=document.headers,
+            cookies=document.cookies,
+            body=document.body,
+            mode="requests",
+            script_srcs=[script.url],
+            resources=[document, script],
+            primary_resource_id=document.id,
+        )
+
+        self.assertIn("React", names(BuiltinProvider().detect(fetch)))
 
     def test_merge_findings_combines_duplicate_provider_evidence(self):
         fetch = make_fetch(headers={"Server": "nginx"})

@@ -104,6 +104,7 @@ class BuiltinProvider(Provider):
     def detect(self, fetch: FetchResult) -> list[Finding]:
         findings: dict[tuple[str, str], Finding] = {}
         body = fetch.body or ""
+        body_with_scripts = "\n".join([body, *fetch.script_bodies])
         cookie_names = "\n".join(fetch.cookies.keys())
         cookie_pairs = "\n".join(f"{name}={value}" for name, value in fetch.cookies.items())
         globals_text = "\n".join(fetch.browser_globals)
@@ -119,7 +120,8 @@ class BuiltinProvider(Provider):
             if not matched and rule.cookie_value_pattern:
                 matched = bool(re.search(rule.cookie_value_pattern, cookie_pairs, re.I))
             if not matched and rule.body_pattern:
-                matched = bool(re.search(rule.body_pattern, body, re.I))
+                haystack = body_with_scripts if rule.dimension == DIM_FRONTEND else body
+                matched = bool(re.search(rule.body_pattern, haystack, re.I))
             if not matched and rule.global_pattern:
                 matched = bool(re.search(rule.global_pattern, globals_text, re.I))
             if not matched and rule.url_pattern:

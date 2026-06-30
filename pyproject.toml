@@ -17,3 +17,4 @@ tech-scan = "tech_scan.cli:main"
 
 [tool.setuptools.package-data]
 "tech_scan.providers.data.wappalyzergo" = ["*.json", "*.md"]
+"tech_scan.fetchers.data.adblock" = ["*.txt", "*.md", "*.html"]

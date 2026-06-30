@@ -43,7 +43,7 @@ Human output must include all fields present in JSONL.
 
 - `tech_scan/cli.py`: argparse setup, scan orchestration, provider selection.
 - `tech_scan/fetchers/`: requests fetcher, browser fetcher, redirect policy, headers, auto browser fallback heuristic.
-- `tech_scan/cache.py`: SQLite cache for fetched observations.
+- `tech_scan/cache.py`: SQLite cache for fetched resource observations and links.
 - `tech_scan/providers/`: builtin rules, vendored `wappalyzergo` fingerprints, and optional user-supplied Wappalyzer JSON provider.
 - `tech_scan/output.py`: human and JSONL output formatting.
 - `tech_scan/models.py`: `FetchResult` and `Finding`.
@@ -51,7 +51,7 @@ Human output must include all fields present in JSONL.
 
 ## Fetching And Cache Rules
 
-The cache stores fetched server observations, not provider results. Provider findings are recomputed from cached observations so the same response can be reused across provider sets.
+The cache stores fetched resource observations, not provider results. Provider findings are recomputed from cached resources so the same response can be reused across provider sets.
 
 Cache keys should depend on fetch identity:
 
@@ -62,6 +62,14 @@ Cache keys should depend on fetch identity:
 - fetch profile version
 
 Do not key cache rows by provider set.
+
+Fetch observations use normalized resource tables:
+
+- `fetches` identifies the scan target and primary resource.
+- `resources` stores documents, scripts, and future resource types with headers/body/error.
+- `resource_links` links a parent resource to subresources by resource ID.
+
+Requests mode fetches directly visible `<script src>` resources and links them to the document resource. Third-party scripts are allowed unless blocked by vendored EasyList/EasyPrivacy rules. Keep script fetching bounded and make script failures non-fatal to the main document fetch.
 
 Redirects must stay on the same hostname. This prevents an app that redirects to a third-party SSO provider from being reported as the third-party site.
 
