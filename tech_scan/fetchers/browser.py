@@ -232,6 +232,9 @@ class BrowserSession:
                 page = context.new_page()
                 observed_responses: list[object] = []
 
+                def record_response(response: object) -> None:
+                    observed_responses.append(response)
+
                 def limit_main_frame_redirects(route: object, request: object) -> None:
                     request_url = request.url
                     if (
@@ -245,7 +248,7 @@ class BrowserSession:
                     route.continue_()
 
                 page.route("**/*", limit_main_frame_redirects)
-                page.on("response", observed_responses.append)
+                page.on("response", record_response)
                 response = page.goto(url, wait_until="networkidle", timeout=timeout * 1000)
                 body = page.content()
                 globals_result = page.evaluate(

@@ -86,6 +86,7 @@ class FakePage:
         self.routes.append((pattern, handler))
 
     def on(self, event, handler):
+        setattr(handler, "_pw_impl_instance_", object())
         self.handlers.setdefault(event, []).append(handler)
 
     def goto(self, url, **kwargs):
