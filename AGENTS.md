@@ -21,6 +21,7 @@ echo 'https://example.com' | uv run -m tech_scan
 echo 'https://example.com' | uv run -m tech_scan --mode requests --output jsonl
 echo 'https://example.com' | CHROMIUM_PATH=/usr/bin/chromium uv run -m tech_scan --mode browser
 echo 'https://example.com' | uv run -m tech_scan --mode auto --verbosity 1
+echo 'https://example.com' | uv run -m tech_scan --sanity-timeout 0.5
 echo 'https://example.com' | uv run -m tech_scan --proxy http://127.0.0.1:8080 --ca-bundle ~/.mitmproxy/mitmproxy-ca-cert.pem
 echo 'https://example.com' | uv run -m tech_scan --proxy socks5h://127.0.0.1:1080 --insecure
 uv run -m tech_scan --provider wappalyzergo < domains.txt
@@ -81,6 +82,8 @@ Fetch observations use normalized resource tables:
 Requests mode fetches directly visible `<script src>` resources and links them to the document resource. Third-party scripts are allowed unless blocked by vendored EasyList/EasyPrivacy rules. Keep script fetching bounded and make script failures non-fatal to the main document fetch.
 
 Redirects must stay on the same hostname. This prevents an app that redirects to a third-party SSO provider from being reported as the third-party site.
+
+Fresh fetches run a default-on DNS/TCP sanity check before requests or browser mode. Bare domains check ports `80` and `443`; URL inputs check explicit ports when present, otherwise the scheme default. Cache hits bypass this check. Keep sanity failures uncached.
 
 Browser mode uses one shared Playwright Chromium session per scan run. Keep Playwright sync API lifecycle on one thread. Use `CHROMIUM_PATH` when set, otherwise `/usr/bin/chromium` when executable, otherwise Playwright default lookup.
 

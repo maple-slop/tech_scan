@@ -145,6 +145,10 @@ class OutputTests(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 parse_args(["--verbosity", "4"])
 
+    def test_sanity_timeout_flag(self):
+        self.assertEqual(parse_args([]).sanity_timeout, 1.0)
+        self.assertEqual(parse_args(["--sanity-timeout", "0.25"]).sanity_timeout, 0.25)
+
     def test_main_human_output_separates_entries_with_blank_line(self):
         with TemporaryDirectory() as tmpdir:
             db = Path(tmpdir) / "results.db"

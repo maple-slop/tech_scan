@@ -22,6 +22,7 @@ from .models import FetchResult
 from .normalize import normalize_target
 from .output import format_result
 from .providers import build_providers, merge_findings
+from .sanity import check_target_ports
 
 
 def ca_bundle_env_default() -> Path | None:
@@ -127,6 +128,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=float,
         default=15,
         help="Per-target fetch timeout in seconds. Default: 15.",
+    )
+    parser.add_argument(
+        "--sanity-timeout",
+        type=float,
+        default=1.0,
+        help="Per-IP/port TCP sanity-check timeout before fresh fetches. Default: 1.0.",
     )
     parser.add_argument(
         "--concurrency",
@@ -249,6 +256,30 @@ def scan_target(
                 diagnostics.log(3, f"cache miss: target={target} mode={mode}")
             else:
                 diagnostics.log(3, f"cache bypass refresh: target={target} mode={mode}")
+            sanity = check_target_ports(
+                raw_target,
+                target,
+                getattr(args, "sanity_timeout", 1.0),
+                diagnostics=diagnostics,
+                include_traceback=diagnostics.enabled(2),
+            )
+            if not sanity.ok:
+                diagnostics.log(
+                    1,
+                    f"sanity skip fetcher: target={target} mode={mode} "
+                    f"status={sanity.status}",
+                )
+                return FetchResult(
+                    input=raw_target,
+                    url=target,
+                    final_url=None,
+                    status=None,
+                    headers={},
+                    cookies={},
+                    body="",
+                    mode=mode,
+                    error=sanity.error,
+                )
             started = time.perf_counter()
             diagnostics.log(3, f"fetch start: target={target} mode={mode}")
             if mode == "browser":
@@ -301,7 +332,11 @@ def scan_target(
 
         fallback_reason = (
             browser_fallback_reason(fetch, len(findings))
-            if args.mode == "auto" and fetch is not None
+            if (
+                args.mode == "auto"
+                and fetch is not None
+                and not str(fetch.error or "").startswith("sanity check failed:")
+            )
             else None
         )
         if args.mode == "browser" or (args.mode == "auto" and fallback_reason):
