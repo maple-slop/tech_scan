@@ -133,6 +133,10 @@ class OutputTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, 2)
         self.assertIn("unrecognized arguments: --wappalyzergo-cmd", stderr.getvalue())
 
+    def test_no_browser_extension_flag(self):
+        self.assertTrue(parse_args([]).no_browser_extension is False)
+        self.assertTrue(parse_args(["--no-browser-extension"]).no_browser_extension)
+
     def test_main_human_output_separates_entries_with_blank_line(self):
         with TemporaryDirectory() as tmpdir:
             db = Path(tmpdir) / "results.db"
@@ -208,10 +212,17 @@ class OutputTests(unittest.TestCase):
         sessions = []
 
         class FakeBrowserSession:
-            def __init__(self, proxy, ignore_https_errors=False, ca_bundle=None):
+            def __init__(
+                self,
+                proxy,
+                ignore_https_errors=False,
+                ca_bundle=None,
+                enable_extension=True,
+            ):
                 self.proxy = proxy
                 self.ignore_https_errors = ignore_https_errors
                 self.ca_bundle = ca_bundle
+                self.enable_extension = enable_extension
                 self.closed = False
                 sessions.append(self)
 

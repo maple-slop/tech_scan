@@ -11,11 +11,13 @@ from unittest.mock import patch
 
 from tech_scan.fetchers import (
     BrowserSession,
+    browser_extension_identity,
     chromium_executable_path,
     fetch_requests,
     redirect_target,
     same_hostname,
     should_try_browser,
+    ubol_extension_path,
 )
 from tech_scan.fetchers.adblock import is_blocked_script_url
 from tech_scan.models import FetchResult
@@ -44,9 +46,32 @@ class FakeSession:
         return self.responses.pop(0)
 
 
+class FakeBrowserRequest:
+    def __init__(self, resource_type):
+        self.resource_type = resource_type
+
+
 class FakeBrowserResponse:
-    status = 200
-    headers = {"server": "Chromium"}
+    def __init__(
+        self,
+        url="https://example.com/app",
+        resource_type="document",
+        status=200,
+        headers=None,
+        body=b"",
+        body_error=None,
+    ):
+        self.url = url
+        self.request = FakeBrowserRequest(resource_type)
+        self.status = status
+        self.headers = headers or {"server": "Chromium"}
+        self._body = body
+        self._body_error = body_error
+
+    def body(self):
+        if self._body_error:
+            raise RuntimeError(self._body_error)
+        return self._body
 
 
 class FakePage:
@@ -54,13 +79,48 @@ class FakePage:
         self.main_frame = object()
         self.url = "https://example.com/app"
         self.routes = []
+        self.handlers = {}
+        self.closed = False
 
     def route(self, pattern, handler):
         self.routes.append((pattern, handler))
 
+    def on(self, event, handler):
+        self.handlers.setdefault(event, []).append(handler)
+
     def goto(self, url, **kwargs):
         self.url = url
-        return FakeBrowserResponse()
+        responses = [
+            FakeBrowserResponse(url, "document", headers={"server": "Chromium"}, body=b"<html></html>"),
+            FakeBrowserResponse(
+                "https://example.com/app.js",
+                "script",
+                headers={"content-type": "application/javascript"},
+                body=b"React.version='18.0.0'",
+            ),
+            FakeBrowserResponse(
+                "https://example.com/app.css",
+                "stylesheet",
+                headers={"content-type": "text/css"},
+                body=b"body{}",
+            ),
+            FakeBrowserResponse(
+                "https://example.com/logo.png",
+                "image",
+                headers={"content-type": "image/png"},
+                body=b"PNG",
+            ),
+            FakeBrowserResponse(
+                "https://example.com/broken.js",
+                "script",
+                headers={"content-type": "application/javascript"},
+                body_error="body failed",
+            ),
+        ]
+        for response in responses:
+            for handler in self.handlers.get("response", []):
+                handler(response)
+        return responses[0]
 
     def content(self):
         return '<html><script src="/app.js"></script></html>'
@@ -70,18 +130,27 @@ class FakePage:
             return ["React"]
         return ["https://example.com/app.js"]
 
+    def close(self):
+        self.closed = True
+
 
 class FakeContext:
     def __init__(self, browser):
         self.browser = browser
-        self.page = FakePage()
+        self.pages = []
         self.closed = False
+        self.cleared_cookies = 0
 
     def new_page(self):
-        return self.page
+        page = FakePage()
+        self.pages.append(page)
+        return page
 
     def cookies(self):
         return [{"name": "sid", "value": "abc"}]
+
+    def clear_cookies(self):
+        self.cleared_cookies += 1
 
     def close(self):
         self.closed = True
@@ -104,11 +173,17 @@ class FakeBrowser:
 class FakeChromium:
     def __init__(self):
         self.launch_args = []
+        self.persistent_launch_args = []
         self.browser = FakeBrowser()
+        self.persistent_context = FakeContext(self.browser)
 
     def launch(self, **kwargs):
         self.launch_args.append(kwargs)
         return self.browser
+
+    def launch_persistent_context(self, user_data_dir, **kwargs):
+        self.persistent_launch_args.append((user_data_dir, kwargs))
+        return self.persistent_context
 
 
 class FakePlaywright:
@@ -477,7 +552,7 @@ class FetchTests(unittest.TestCase):
             with patch("tech_scan.fetchers.browser.os.access", return_value=False):
                 self.assertIsNone(chromium_executable_path())
 
-    def test_browser_session_reuses_one_browser_with_separate_contexts(self):
+    def test_browser_session_uses_one_persistent_context_with_extension(self):
         playwright = FakePlaywright()
         with install_fake_playwright(playwright):
             with patch.dict("os.environ", {"CHROMIUM_PATH": "/custom/chromium"}):
@@ -486,19 +561,18 @@ class FetchTests(unittest.TestCase):
                 second = session.fetch("example.org", "https://example.org", 5)
                 session.close()
 
-        self.assertEqual(len(playwright.chromium.launch_args), 1)
-        self.assertEqual(
-            playwright.chromium.launch_args[0]["executable_path"],
-            "/custom/chromium",
-        )
-        self.assertEqual(
-            playwright.chromium.launch_args[0]["proxy"],
-            {"server": "http://proxy:8080"},
-        )
-        self.assertEqual(len(playwright.chromium.browser.contexts), 2)
+        self.assertEqual(len(playwright.chromium.launch_args), 0)
+        self.assertEqual(len(playwright.chromium.persistent_launch_args), 1)
+        user_data_dir, launch_args = playwright.chromium.persistent_launch_args[0]
+        self.assertEqual(launch_args["executable_path"], "/custom/chromium")
+        self.assertEqual(launch_args["proxy"], {"server": "http://proxy:8080"})
+        self.assertIn("--load-extension=", launch_args["args"][1])
+        self.assertIn("tech_scan/fetchers/data/ubol", launch_args["args"][1])
+        self.assertEqual(playwright.chromium.persistent_context.cleared_cookies, 2)
+        self.assertFalse(__import__("os").path.exists(user_data_dir))
         self.assertEqual(first.browser_globals, ["React"])
         self.assertEqual(second.script_srcs, ["https://example.com/app.js"])
-        self.assertTrue(playwright.chromium.browser.closed)
+        self.assertTrue(playwright.chromium.persistent_context.closed)
         self.assertTrue(playwright.stopped)
 
     def test_browser_session_applies_tls_options(self):
@@ -512,12 +586,46 @@ class FetchTests(unittest.TestCase):
             session.fetch("example.com", "https://example.com", 5)
             session.close()
 
-        launch_env = playwright.chromium.launch_args[0]["env"]
+        launch_env = playwright.chromium.persistent_launch_args[0][1]["env"]
         self.assertEqual(launch_env["SSL_CERT_FILE"], "/tmp/mitmproxy-ca.pem")
         self.assertEqual(launch_env["REQUESTS_CA_BUNDLE"], "/tmp/mitmproxy-ca.pem")
         self.assertEqual(launch_env["CURL_CA_BUNDLE"], "/tmp/mitmproxy-ca.pem")
-        context_kwargs = playwright.chromium.browser.contexts[0][1]
-        self.assertTrue(context_kwargs["ignore_https_errors"])
+        self.assertTrue(playwright.chromium.persistent_launch_args[0][1]["ignore_https_errors"])
+
+    def test_browser_session_raw_mode_uses_browser_contexts(self):
+        playwright = FakePlaywright()
+        with install_fake_playwright(playwright):
+            session = BrowserSession(proxy=None, enable_extension=False)
+            session.fetch("example.com", "https://example.com", 5)
+            session.close()
+
+        self.assertEqual(len(playwright.chromium.launch_args), 1)
+        self.assertEqual(len(playwright.chromium.persistent_launch_args), 0)
+        self.assertEqual(len(playwright.chromium.browser.contexts), 1)
+        self.assertTrue(playwright.chromium.browser.contexts[0][0].closed)
+        self.assertTrue(playwright.chromium.browser.closed)
+
+    def test_browser_session_records_subresources_and_body_errors(self):
+        playwright = FakePlaywright()
+        with install_fake_playwright(playwright):
+            session = BrowserSession(proxy=None)
+            result = session.fetch("example.com", "https://example.com", 5)
+            session.close()
+
+        by_url = {resource.url: resource for resource in result.resources}
+        self.assertEqual(result.primary_resource.kind, "document")
+        self.assertIn("https://example.com/app.js", by_url)
+        self.assertEqual(by_url["https://example.com/app.js"].kind, "script")
+        self.assertEqual(by_url["https://example.com/app.js"].parent_id, result.primary_resource_id)
+        self.assertIn("React.version", by_url["https://example.com/app.js"].body)
+        self.assertEqual(by_url["https://example.com/app.css"].body, "body{}")
+        self.assertEqual(by_url["https://example.com/logo.png"].body, "")
+        self.assertEqual(by_url["https://example.com/broken.js"].error, "body failed")
+
+    def test_ubol_package_data_is_available(self):
+        self.assertTrue(ubol_extension_path().endswith("tech_scan/fetchers/data/ubol"))
+        self.assertEqual(browser_extension_identity(True), "extension:ubol:2026.628.2035")
+        self.assertEqual(browser_extension_identity(False), "extension:none")
 
     def test_auto_does_not_retry_small_static_html(self):
         fetch = FetchResult(

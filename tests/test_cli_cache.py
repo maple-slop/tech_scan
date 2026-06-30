@@ -21,6 +21,7 @@ def args_for(db, provider_data=None, refresh=False, mode="requests"):
         output="jsonl",
         ca_bundle=None,
         insecure=False,
+        no_browser_extension=False,
         wappalyzer_data=provider_data,
     )
 

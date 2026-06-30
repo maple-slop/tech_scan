@@ -134,6 +134,36 @@ class CacheTests(unittest.TestCase):
                     )
                 )
 
+    def test_browser_extension_identity_isolates_cache_rows(self):
+        with TemporaryDirectory() as tmpdir:
+            with ResponseCache(Path(tmpdir) / "results.db") as cache:
+                cache.set(
+                    "https://example.com",
+                    "browser",
+                    None,
+                    make_fetch("browser"),
+                    "default|extension:ubol:2026.628.2035",
+                )
+
+                self.assertIsNone(
+                    cache.get(
+                        "https://example.com",
+                        "browser",
+                        None,
+                        86400,
+                        "default|extension:none",
+                    )
+                )
+                self.assertIsNotNone(
+                    cache.get(
+                        "https://example.com",
+                        "browser",
+                        None,
+                        86400,
+                        "default|extension:ubol:2026.628.2035",
+                    )
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

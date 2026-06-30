@@ -4,7 +4,13 @@ from .auto import (
     looks_spa_shell,
     should_try_browser,
 )
-from .browser import BrowserSession, chromium_executable_path, fetch_browser
+from .browser import (
+    BrowserSession,
+    browser_extension_identity,
+    chromium_executable_path,
+    fetch_browser,
+    ubol_extension_path,
+)
 from .headers import BROWSER_HEADERS
 from .requests import (
     extract_script_srcs,
@@ -17,6 +23,7 @@ from .requests import (
 __all__ = [
     "BROWSER_HEADERS",
     "BrowserSession",
+    "browser_extension_identity",
     "chromium_executable_path",
     "extract_script_srcs",
     "fetch_browser",
@@ -28,4 +35,5 @@ __all__ = [
     "redirect_target",
     "same_hostname",
     "should_try_browser",
+    "ubol_extension_path",
 ]

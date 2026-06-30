@@ -73,7 +73,9 @@ Requests mode fetches directly visible `<script src>` resources and links them t
 
 Redirects must stay on the same hostname. This prevents an app that redirects to a third-party SSO provider from being reported as the third-party site.
 
-Browser mode uses one shared Playwright Chromium browser per scan run and separate browser contexts/pages per target. Keep Playwright sync API lifecycle on one thread. Use `CHROMIUM_PATH` when set, otherwise `/usr/bin/chromium` when executable, otherwise Playwright default lookup.
+Browser mode uses one shared Playwright Chromium session per scan run. Keep Playwright sync API lifecycle on one thread. Use `CHROMIUM_PATH` when set, otherwise `/usr/bin/chromium` when executable, otherwise Playwright default lookup.
+
+Browser mode loads vendored uBlock Origin Lite by default through a persistent Chromium context. Use `--no-browser-extension` when a raw browser session is needed. Because Chromium extensions require a persistent context, browser mode clears cookies between targets as best-effort isolation rather than creating a separate browser context per target when the extension is enabled.
 
 Proxy/TLS behavior:
 
@@ -93,6 +95,8 @@ Keep builtin rules conservative and evidence-driven. Each finding should include
 - `evidence`
 
 `wappalyzergo` uses vendored `projectdiscovery/wappalyzergo` fingerprint JSON and must not shell out to subprocess wrappers. Keep the vendored upstream license and attribution beside the data. `wappalyzer_json` remains available for explicit user-supplied datasets via `--wappalyzer-data` or `WAPPALYZER_DATA`.
+
+uBlock Origin Lite is vendored under fetcher data for browser mode. Keep its upstream license and attribution beside the extension files, and include it in package-data checks when packaging behavior changes.
 
 ## Development Commands
 
@@ -141,6 +145,7 @@ Protect these behaviors with tests when touched:
 - Same-host redirect restriction.
 - Browser session reuse and per-target browser context isolation.
 - Proxy routing and TLS verification options.
+- Browser resource capture and default uBlock Origin Lite loading.
 
 ## Commit Convention
 

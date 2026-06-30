@@ -32,6 +32,7 @@ clean:
 		tech_scan/fetchers/__pycache__ \
 		tech_scan/fetchers/data/__pycache__ \
 		tech_scan/fetchers/data/adblock/__pycache__ \
+		tech_scan/fetchers/data/ubol/__pycache__ \
 		tech_scan/providers/__pycache__ \
 		tech_scan/providers/data/__pycache__ \
 		tech_scan/providers/data/wappalyzergo/__pycache__ \

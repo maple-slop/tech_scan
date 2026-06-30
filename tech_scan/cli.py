@@ -8,7 +8,13 @@ from pathlib import Path
 from typing import Any
 
 from .cache import ResponseCache, default_db_path
-from .fetchers import BrowserSession, fetch_browser, fetch_requests, should_try_browser
+from .fetchers import (
+    BrowserSession,
+    browser_extension_identity,
+    fetch_browser,
+    fetch_requests,
+    should_try_browser,
+)
 from .models import FetchResult
 from .normalize import normalize_target
 from .output import format_result
@@ -37,6 +43,13 @@ def requests_verify(ca_bundle: Path | None, insecure: bool) -> bool | str | None
     if ca_bundle:
         return str(ca_bundle.expanduser().resolve())
     return None
+
+
+def fetch_identity(args: argparse.Namespace, mode: str) -> str:
+    parts = [tls_identity(args.ca_bundle, args.insecure)]
+    if mode == "browser":
+        parts.append(browser_extension_identity(not getattr(args, "no_browser_extension", False)))
+    return "|".join(parts)
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -92,6 +105,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--insecure",
         action="store_true",
         help="Disable TLS certificate verification. Useful for intercepting proxies such as mitmproxy.",
+    )
+    parser.add_argument(
+        "--no-browser-extension",
+        action="store_true",
+        help="Disable the vendored uBlock Origin Lite extension in browser mode.",
     )
     parser.add_argument(
         "--timeout",
@@ -198,7 +216,7 @@ def scan_target(
                     mode,
                     args.proxy,
                     args.cache_ttl,
-                    tls_identity(args.ca_bundle, args.insecure),
+                    fetch_identity(args, mode),
                 )
                 if cached_fetch:
                     return cached_fetch
@@ -211,6 +229,7 @@ def scan_target(
                     browser_session,
                     args.insecure,
                     str(args.ca_bundle.expanduser().resolve()) if args.ca_bundle else None,
+                    not getattr(args, "no_browser_extension", False),
                 )
             else:
                 fresh_fetch = fetch_requests(
@@ -225,7 +244,7 @@ def scan_target(
                 mode,
                 args.proxy,
                 fresh_fetch,
-                tls_identity(args.ca_bundle, args.insecure),
+                fetch_identity(args, mode),
             )
             return fresh_fetch
 
@@ -305,6 +324,7 @@ def main(argv: list[str] | None = None) -> int:
             args.proxy,
             ignore_https_errors=args.insecure,
             ca_bundle=str(args.ca_bundle.resolve()) if args.ca_bundle else None,
+            enable_extension=not getattr(args, "no_browser_extension", False),
         )
         if args.mode in {"browser", "auto"}
         else None
