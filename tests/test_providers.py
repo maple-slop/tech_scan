@@ -42,6 +42,54 @@ def names(findings):
     return {finding.name for finding in findings}
 
 
+def make_fetch_with_resources(body="", resources=None, url="https://example.com"):
+    document = ResourceObservation(
+        id="document:0",
+        kind="document",
+        url=url,
+        final_url=url,
+        status=200,
+        headers={},
+        cookies={},
+        body=body,
+    )
+    all_resources = [document, *(resources or [])]
+    return FetchResult(
+        input="example.com",
+        url=url,
+        final_url=url,
+        status=200,
+        headers={},
+        cookies={},
+        body=body,
+        mode="requests",
+        script_srcs=[resource.url for resource in all_resources if resource.kind == "script"],
+        resources=all_resources,
+        primary_resource_id=document.id,
+    )
+
+
+def script_resource(
+    url="https://example.com/app.js",
+    body="",
+    status=200,
+    error=None,
+    kind="script",
+):
+    return ResourceObservation(
+        id=f"{kind}:0",
+        parent_id="document:0",
+        kind=kind,
+        url=url,
+        final_url=url,
+        status=status,
+        headers={},
+        cookies={},
+        body=body,
+        error=error,
+    )
+
+
 class ProviderTests(unittest.TestCase):
     def test_builtin_detects_traditional_backend_tech(self):
         fetch = make_fetch(
@@ -108,6 +156,81 @@ class ProviderTests(unittest.TestCase):
         )
 
         self.assertIn("React", names(BuiltinProvider().detect(fetch)))
+
+    def test_builtin_script_body_evidence_includes_matching_script_url(self):
+        fetch = make_fetch_with_resources(
+            body="<html></html>",
+            resources=[
+                script_resource(
+                    url="https://example.com/static/app.js",
+                    body="/* bundled */ ReactDOM.render(App, root)",
+                )
+            ],
+        )
+
+        by_name = {finding.name: finding for finding in BuiltinProvider().detect(fetch)}
+
+        self.assertIn("React", by_name)
+        self.assertIn(
+            "script body: https://example.com/static/app.js",
+            by_name["React"].evidence,
+        )
+
+    def test_builtin_script_url_evidence_includes_matching_script_url(self):
+        fetch = make_fetch_with_resources(
+            body="<html></html>",
+            resources=[
+                script_resource(
+                    url="https://example.com/_next/static/chunks/main.js",
+                    body="",
+                )
+            ],
+        )
+
+        by_name = {finding.name: finding for finding in BuiltinProvider().detect(fetch)}
+
+        self.assertIn("Next.js", by_name)
+        self.assertIn(
+            "script url: https://example.com/_next/static/chunks/main.js",
+            by_name["Next.js"].evidence,
+        )
+
+    def test_builtin_script_body_ignores_failed_and_non_script_resources(self):
+        failed_script = script_resource(
+            url="https://example.com/broken.js",
+            body="ReactDOM.render(App, root)",
+            error="timeout",
+        )
+        stylesheet = script_resource(
+            url="https://example.com/app.css",
+            body="ReactDOM.render(App, root)",
+            kind="stylesheet",
+        )
+        fetch = make_fetch_with_resources(
+            body="<html></html>",
+            resources=[failed_script, stylesheet],
+        )
+
+        self.assertNotIn("React", names(BuiltinProvider().detect(fetch)))
+
+    def test_builtin_backend_adjacent_script_body_markers_are_source_backed(self):
+        fetch = make_fetch_with_resources(
+            body="<html></html>",
+            resources=[
+                script_resource(
+                    url="https://example.com/assets/yii.activeform.js",
+                    body="jQuery.fn.yiiActiveForm = function() {};",
+                )
+            ],
+        )
+
+        by_name = {finding.name: finding for finding in BuiltinProvider().detect(fetch)}
+
+        self.assertIn("Yii", by_name)
+        self.assertIn(
+            "script body: https://example.com/assets/yii.activeform.js",
+            by_name["Yii"].evidence,
+        )
 
     def test_builtin_detects_wappalyzer_informed_server_signatures(self):
         cases = [

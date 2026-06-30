@@ -12,6 +12,7 @@ from tech_scan.models import (
     DIM_FRONTEND,
     FetchResult,
     Finding,
+    ResourceObservation,
 )
 from tech_scan.observations import header_display_name
 from tech_scan.url_policy import same_hostname
@@ -23,6 +24,8 @@ from .base import Provider
 class DetectionContext:
     body: str
     body_with_scripts: str
+    script_resources: list[ResourceObservation]
+    text_resources: list[ResourceObservation]
     cookie_names: list[str]
     cookie_pairs: list[tuple[str, str]]
     browser_globals: list[str]
@@ -108,6 +111,56 @@ def body_detector(pattern: str, evidence: str, include_scripts: bool = False) ->
     return detect
 
 
+def _is_successful_resource(resource: ResourceObservation) -> bool:
+    return not resource.error and (resource.status is None or 200 <= resource.status < 400)
+
+
+def _source_url(resource: ResourceObservation) -> str:
+    return resource.final_url or resource.url
+
+
+def script_body_detector(pattern: str, evidence_label: str = "script body") -> Detector:
+    regex = _compile(pattern)
+
+    def detect(fetch: FetchResult, context: DetectionContext) -> list[str]:
+        return [
+            f"{evidence_label}: {_source_url(resource)}"
+            for resource in context.script_resources
+            if _is_successful_resource(resource)
+            and resource.body
+            and regex.search(resource.body)
+        ]
+
+    return detect
+
+
+def script_url_detector(pattern: str, evidence_label: str = "script url") -> Detector:
+    regex = _compile(pattern)
+
+    def detect(fetch: FetchResult, context: DetectionContext) -> list[str]:
+        return [
+            f"{evidence_label}: {_source_url(resource)}"
+            for resource in context.script_resources
+            if _is_successful_resource(resource)
+            and _source_url(resource)
+            and regex.search(_source_url(resource))
+        ]
+
+    return detect
+
+
+def any_detector(*detectors: Detector) -> Detector:
+    def detect(fetch: FetchResult, context: DetectionContext) -> list[str]:
+        evidence: list[str] = []
+        for detector in detectors:
+            for item in detector(fetch, context):
+                if item not in evidence:
+                    evidence.append(item)
+        return evidence
+
+    return detect
+
+
 def global_detector(pattern: str) -> Detector:
     regex = _compile(pattern)
 
@@ -185,33 +238,80 @@ RULES = [
     Rule("F5 BIG-IP", DIM_CDN_WAF_SERVER, 90, cookie_name_detector(r"(?i)(lastmrh_session|mrhsession|bigipserver|f5_fullwt|f5_st)")),
     Rule("Phusion Passenger", DIM_CDN_WAF_SERVER, 90, header_detector("server", r"phusion passenger")),
     Rule("Phusion Passenger", DIM_CDN_WAF_SERVER, 90, header_detector("x-powered-by", r"phusion passenger(?:\(r\))?")),
-    Rule("React", DIM_FRONTEND, 80, body_detector(r"react(?:\.production)?(?:\.min)?\.js|data-reactroot|react-dom", "react script/html marker", True)),
+    Rule("React", DIM_FRONTEND, 80, any_detector(
+        body_detector(r"data-reactroot|react-dom", "react script/html marker", True),
+        script_body_detector(r"react-dom|React\.createElement|ReactDOM\.render|__REACT_DEVTOOLS_GLOBAL_HOOK__", "script body"),
+        script_url_detector(r"react(?:\.production)?(?:\.min)?\.js|react-dom(?:\.production)?(?:\.min)?\.js"),
+    )),
     Rule("React", DIM_FRONTEND, 75, global_detector(r"React")),
-    Rule("Vue.js", DIM_FRONTEND, 80, body_detector(r"vue(?:\.runtime)?(?:\.global)?(?:\.prod)?(?:\.min)?\.js|data-v-[a-f0-9]+|__vue__", "vue script/html marker", True)),
+    Rule("Vue.js", DIM_FRONTEND, 80, any_detector(
+        body_detector(r"data-v-[a-f0-9]+|__vue__", "vue script/html marker", True),
+        script_body_detector(r"Vue\.config|Vue\.component|createApp\(|__VUE__", "script body"),
+        script_url_detector(r"vue(?:\.runtime)?(?:\.global)?(?:\.prod)?(?:\.min)?\.js"),
+    )),
     Rule("Vue.js", DIM_FRONTEND, 75, global_detector(r"Vue")),
-    Rule("Angular", DIM_FRONTEND, 80, body_detector(r"angular(?:\.min)?\.js|ng-version|ng-app", "angular script/html marker", True)),
+    Rule("Angular", DIM_FRONTEND, 80, any_detector(
+        body_detector(r"ng-version|ng-app", "angular script/html marker", True),
+        script_body_detector(r"@angular/core|ng\.core|platformBrowserDynamic", "script body"),
+        script_url_detector(r"angular(?:\.min)?\.js"),
+    )),
     Rule("Angular", DIM_FRONTEND, 75, global_detector(r"Angular")),
-    Rule("AngularJS", DIM_FRONTEND, 85, body_detector(r"<(?:div|html)[^>]+ng-app=|<ng-app|angular(?:\.min)?\.js", "angularjs marker", True)),
+    Rule("AngularJS", DIM_FRONTEND, 85, any_detector(
+        body_detector(r"<(?:div|html)[^>]+ng-app=|<ng-app", "angularjs marker", True),
+        script_body_detector(r"angular\.module|angular\.element|ng-app", "script body"),
+        script_url_detector(r"angular(?:\.min)?\.js"),
+    )),
     Rule("AngularJS", DIM_FRONTEND, 75, global_detector(r"^angular$|angular\.version")),
-    Rule("Alpine.js", DIM_FRONTEND, 80, body_detector(r"\bx-data\b|alpine(?:\.min)?\.js", "alpine marker", True)),
+    Rule("Alpine.js", DIM_FRONTEND, 80, any_detector(
+        body_detector(r"\bx-data\b", "alpine marker", True),
+        script_body_detector(r"Alpine\.data|Alpine\.store|x-data", "script body"),
+        script_url_detector(r"alpine(?:\.min)?\.js"),
+    )),
     Rule("Alpine.js", DIM_FRONTEND, 75, global_detector(r"Alpine")),
     Rule("Astro", DIM_FRONTEND, 85, meta_detector("generator", r"^astro\s+v?[\d.]+", "astro generator meta")),
     Rule("Astro", DIM_FRONTEND, 75, global_detector(r"Astro")),
     Rule("Stimulus", DIM_FRONTEND, 80, body_detector(r"data-controller=", "stimulus controller marker")),
-    Rule("htmx", DIM_FRONTEND, 80, body_detector(r"htmx(?:\.min)?\.js|htmx\.org@", "htmx script marker", True)),
+    Rule("htmx", DIM_FRONTEND, 80, any_detector(
+        body_detector(r"\bhx-[a-z-]+=|htmx(?:\.min)?\.js|htmx\.org@", "htmx html marker", True),
+        script_body_detector(r"htmx\.defineExtension|htmx\.process|htmx\.org@", "script body"),
+        script_url_detector(r"htmx(?:\.min)?\.js"),
+    )),
     Rule("htmx", DIM_FRONTEND, 75, global_detector(r"^htmx$")),
-    Rule("Polymer", DIM_FRONTEND, 80, body_detector(r"<polymer-[^>]+|/polymer\.html|polymer\.js", "polymer marker", True)),
+    Rule("Polymer", DIM_FRONTEND, 80, any_detector(
+        body_detector(r"<polymer-[^>]+|/polymer\.html", "polymer marker", True),
+        script_body_detector(r"Polymer\(|Polymer\.Element|customElements\.define", "script body"),
+        script_url_detector(r"polymer\.js"),
+    )),
     Rule("Polymer", DIM_FRONTEND, 75, global_detector(r"Polymer")),
-    Rule("Svelte", DIM_FRONTEND, 75, body_detector(r"__svelte|svelte-[a-z0-9]+", "svelte marker", True)),
+    Rule("Svelte", DIM_FRONTEND, 75, any_detector(
+        body_detector(r"__svelte|svelte-[a-z0-9]+", "svelte marker", True),
+        script_body_detector(r"new\s+[A-Za-z_$][\w$]*\s*\(\s*\{\s*target:|svelte/internal", "script body"),
+    )),
     Rule("Svelte", DIM_FRONTEND, 75, global_detector(r"Svelte")),
     Rule("SvelteKit", DIM_FRONTEND, 85, meta_detector("generator", r"sveltekit", "sveltekit generator meta")),
-    Rule("Next.js", DIM_FRONTEND, 90, body_detector(r"/_next/|__NEXT_DATA__|window\.__NEXT", "next.js marker", True)),
+    Rule("Next.js", DIM_FRONTEND, 90, any_detector(
+        body_detector(r"/_next/|__NEXT_DATA__|window\.__NEXT", "next.js marker", True),
+        script_body_detector(r"__NEXT_DATA__|self\.__BUILD_MANIFEST|next/dist", "script body"),
+        script_url_detector(r"/_next/"),
+    )),
     Rule("Next.js", DIM_FRONTEND, 75, global_detector(r"__NEXT")),
-    Rule("Nuxt", DIM_FRONTEND, 90, body_detector(r"/_nuxt/|__NUXT__|window\.__NUXT", "nuxt marker", True)),
+    Rule("Nuxt", DIM_FRONTEND, 90, any_detector(
+        body_detector(r"/_nuxt/|__NUXT__|window\.__NUXT", "nuxt marker", True),
+        script_body_detector(r"__NUXT__|window\.__NUXT|nuxt\.config", "script body"),
+        script_url_detector(r"/_nuxt/"),
+    )),
     Rule("Nuxt", DIM_FRONTEND, 75, global_detector(r"__NUXT")),
     Rule("Remix", DIM_FRONTEND, 80, global_detector(r"__remixContext")),
-    Rule("Gatsby", DIM_FRONTEND, 85, body_detector(r"___gatsby|gatsby-browser|gatsby-focus-wrapper", "gatsby marker", True)),
-    Rule("jQuery", DIM_FRONTEND, 80, body_detector(r"jquery(?:-[0-9.]+)?(?:\.min)?\.js|window\.jQuery", "jquery script/global", True)),
+    Rule("Gatsby", DIM_FRONTEND, 85, any_detector(
+        body_detector(r"___gatsby|gatsby-browser|gatsby-focus-wrapper", "gatsby marker", True),
+        script_body_detector(r"___gatsby|gatsby-browser|webpackJsonp.*gatsby", "script body"),
+        script_url_detector(r"gatsby-(?:browser|app)|/page-data/"),
+    )),
+    Rule("jQuery", DIM_FRONTEND, 80, any_detector(
+        body_detector(r"window\.jQuery", "jquery script/global", True),
+        script_body_detector(r"jQuery\.fn\.jquery|\$\.fn\.jquery", "script body"),
+        script_url_detector(r"jquery(?:-[0-9.]+)?(?:\.min)?\.js"),
+    )),
     Rule("jQuery", DIM_FRONTEND, 75, global_detector(r"jQuery")),
     Rule("ASP.NET", DIM_BACKEND, 95, header_detector("x-aspnet-version", r".+")),
     Rule("ASP.NET", DIM_BACKEND, 90, header_detector("x-powered-by", r"\basp\.net\b")),
@@ -281,10 +381,21 @@ RULES = [
     Rule("CakePHP", DIM_BACKEND, 85, cookie_name_detector(r"cakephp")),
     Rule("CakePHP", DIM_BACKEND, 80, meta_detector("application-name", r"cakephp", "cakephp application meta")),
     Rule("Yii", DIM_BACKEND, 85, cookie_name_detector(r"yii_csrf_token")),
-    Rule("Yii", DIM_BACKEND, 80, body_detector(r"yii\.(?:validation|activeform)\.js|name=[\"']yii_csrf_token[\"']", "yii marker", True)),
-    Rule("Livewire", DIM_BACKEND, 85, body_detector(r"\bwire:[a-z-]+|livewire(?:\.min)?\.js", "livewire marker", True)),
+    Rule("Yii", DIM_BACKEND, 80, any_detector(
+        body_detector(r"name=[\"']yii_csrf_token[\"']", "yii marker"),
+        script_body_detector(r"yii\.(?:validation|activeform)|yiiActiveForm", "script body"),
+        script_url_detector(r"yii\.(?:validation|activeform)\.js"),
+    )),
+    Rule("Livewire", DIM_BACKEND, 85, any_detector(
+        body_detector(r"\bwire:[a-z-]+", "livewire marker"),
+        script_body_detector(r"Livewire\.|livewire_token|livewire(?:\.min)?\.js", "script body"),
+        script_url_detector(r"livewire(?:\.min)?\.js"),
+    )),
     Rule("Adobe ColdFusion", DIM_BACKEND, 85, cookie_name_detector(r"(CFID|CFTOKEN)")),
-    Rule("Adobe ColdFusion", DIM_BACKEND, 80, body_detector(r"\.cfm(?:[?\"']|$)|/cfajax/", "coldfusion marker", True)),
+    Rule("Adobe ColdFusion", DIM_BACKEND, 80, any_detector(
+        body_detector(r"\.cfm(?:[?\"']|$)|/cfajax/", "coldfusion marker", True),
+        script_url_detector(r"/cfajax/"),
+    )),
 ]
 
 
@@ -340,6 +451,12 @@ class BuiltinProvider(Provider):
         context = DetectionContext(
             body=body,
             body_with_scripts="\n".join([body, *fetch.script_bodies]),
+            script_resources=fetch.script_resources,
+            text_resources=[
+                resource
+                for resource in fetch.resources
+                if resource.kind in {"document", "script", "stylesheet", "xhr", "fetch"}
+            ],
             cookie_names=list(fetch.cookies.keys()),
             cookie_pairs=list(fetch.cookies.items()),
             browser_globals=list(fetch.browser_globals),
