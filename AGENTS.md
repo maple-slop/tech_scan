@@ -99,21 +99,33 @@ Keep builtin rules conservative and evidence-driven. Each finding should include
 Run these before committing:
 
 ```bash
-python -m unittest discover -s tests
-python -m compileall tech_scan tests
-rm -rf tech_scan/__pycache__ tests/__pycache__
+make check-uv
+make clean
 ```
 
-When using `uv` in this sandbox, prefer a writable cache:
+Common Makefile targets:
 
 ```bash
-UV_CACHE_DIR=/tmp/uv-cache uv run -m tech_scan --help
+make test          # python -m unittest discover -s tests
+make compile       # python -m compileall tech_scan tests
+make check         # test + compile with the current Python
+make test-uv       # uv run python -m unittest discover -s tests
+make compile-uv    # uv run python -m compileall tech_scan tests
+make check-uv      # test-uv + compile-uv
+make clean         # remove pycache, build/dist, egg-info, and tool caches
+make help          # uv run -m tech_scan --help
 ```
 
-Browser smoke tests may require network approval and system Chromium:
+The Makefile defaults `UV_CACHE_DIR` to `/tmp/uv-cache`. Override it when needed:
 
 ```bash
-echo 'https://example.com' | UV_CACHE_DIR=/tmp/uv-cache CHROMIUM_PATH=/usr/bin/chromium uv run -m tech_scan --mode browser --output jsonl --refresh
+UV_CACHE_DIR=/tmp/custom-uv-cache make check-uv
+```
+
+Proxy tests that open local sockets and browser smoke tests may require approval outside the sandbox. Browser smoke test:
+
+```bash
+echo 'https://example.com' | make smoke-browser
 ```
 
 ## Testing Guidance
