@@ -93,6 +93,18 @@ class CacheTests(unittest.TestCase):
             self.assertEqual(cached.script_resources[0].parent_id, cached.primary_resource_id)
             self.assertIn("React.version", cached.script_resources[0].body)
 
+    def test_cached_fetch_url_uses_concrete_cache_target(self):
+        with TemporaryDirectory() as tmpdir:
+            with ResponseCache(Path(tmpdir) / "results.db") as cache:
+                cache.set("http://example.com", "requests", None, make_fetch())
+
+                cached = cache.get("http://example.com", "requests", None, 86400)
+
+            self.assertIsNotNone(cached)
+            assert cached is not None
+            self.assertEqual(cached.url, "http://example.com")
+            self.assertEqual(cached.final_url, "https://www.example.com")
+
     def test_browser_observation_roundtrip(self):
         with TemporaryDirectory() as tmpdir:
             with ResponseCache(Path(tmpdir) / "results.db") as cache:

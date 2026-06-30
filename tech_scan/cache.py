@@ -166,7 +166,7 @@ class ResponseCache:
         script_srcs = [resource.url for resource in resources if resource.kind == "script"]
         return FetchResult(
             input=target,
-            url=primary.url,
+            url=target,
             final_url=primary.final_url,
             status=primary.status,
             headers=primary.headers,
