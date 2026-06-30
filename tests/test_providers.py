@@ -200,6 +200,34 @@ class ProviderTests(unittest.TestCase):
         self.assertIn("ASP.NET Web Forms", by_name)
         self.assertGreater(by_name["ASP.NET Web Forms"].confidence, by_name["ASP.NET"].confidence)
 
+    def test_aspnet_x_powered_by_is_generic_not_core(self):
+        fetch = make_fetch(
+            headers={
+                "Server": "Microsoft-IIS/10.0",
+                "X-Powered-By": "ASP.NET",
+            }
+        )
+
+        detected = BuiltinProvider().detect(fetch)
+        detected_names = names(detected)
+
+        self.assertIn("ASP.NET", detected_names)
+        self.assertIn("Microsoft IIS", detected_names)
+        self.assertNotIn("ASP.NET Core", detected_names)
+
+    def test_aspnet_core_detects_kestrel_and_core_cookie(self):
+        detected = BuiltinProvider().detect(
+            make_fetch(
+                headers={"Server": "Kestrel"},
+                cookies={".AspNetCore.Session": "abc"},
+            )
+        )
+        by_name = {finding.name: finding for finding in detected}
+
+        self.assertIn("ASP.NET Core", by_name)
+        self.assertIn("kestrel server header", by_name["ASP.NET Core"].evidence)
+        self.assertIn("asp.net core cookie", by_name["ASP.NET Core"].evidence)
+
     def test_laravel_cookie_and_csrf_markers(self):
         fetch = make_fetch(
             url="https://example.com/login.php",
