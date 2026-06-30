@@ -27,6 +27,8 @@ RESULT = {
     "mode": "requests",
     "providers": ["builtin"],
     "cached": True,
+    "cache_created_at": 1710000000,
+    "cache_updated_at": 1710000100,
     "observations": [],
     "technologies": [
         {
@@ -55,6 +57,8 @@ class OutputTests(unittest.TestCase):
         self.assertIn("mode: requests", output)
         self.assertIn("providers: builtin", output)
         self.assertIn("cached: True", output)
+        self.assertIn("cache_created_at: 1710000000", output)
+        self.assertIn("cache_updated_at: 1710000100", output)
         self.assertIn("error: None", output)
         self.assertIn("observations: none", output)
 

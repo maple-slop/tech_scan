@@ -21,6 +21,8 @@ class ResourceObservation:
     body: str
     parent_id: str | None = None
     error: str | None = None
+    cache_created_at: int | None = None
+    cache_updated_at: int | None = None
 
 
 @dataclass(frozen=True)

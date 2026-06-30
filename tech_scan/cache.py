@@ -4,17 +4,64 @@ import json
 import os
 import sqlite3
 import time
+from dataclasses import dataclass
 from pathlib import Path
 
 from .models import FetchResult, ResourceObservation
 
 
-FETCH_PROFILE_VERSION = "v4"
+FETCH_PROFILE_VERSION = "v5"
+
+
+@dataclass(frozen=True)
+class CacheDisposition:
+    cacheable: bool
+    reason: str
+
+
+LOCAL_CLIENT_ERROR_MARKERS = [
+    "playwright is not installed",
+    "browser executable",
+    "executable doesn't exist",
+    "chromium",
+    "chrome for testing",
+    "browser launch",
+    "launch_persistent_context",
+    "new_context",
+    "persistent context",
+    "user data dir",
+]
+
+
+def cache_disposition(fetch: FetchResult) -> CacheDisposition:
+    primary = fetch.primary_resource
+    if primary.status is not None:
+        return CacheDisposition(True, f"http-status-{primary.status}")
+    if not fetch.error and not primary.error:
+        return CacheDisposition(True, "resource-observation")
+
+    error = str(fetch.error or primary.error or "").lower()
+    if primary.kind == "sanity":
+        if "no open port" in error:
+            return CacheDisposition(True, "sanity-no-open-port")
+        if "dns resolution failed" in error:
+            return CacheDisposition(True, "sanity-dns-error")
+        if "invalid port target" in error:
+            return CacheDisposition(True, "sanity-invalid-port")
+        return CacheDisposition(True, "sanity-error")
+    if "blocked cross-host redirect" in error:
+        return CacheDisposition(True, "blocked-cross-host-redirect")
+    if any(marker in error for marker in LOCAL_CLIENT_ERROR_MARKERS):
+        return CacheDisposition(False, "local-client-error")
+    if fetch.mode == "browser":
+        return CacheDisposition(False, "browser-client-error")
+    if fetch.mode == "requests":
+        return CacheDisposition(True, "requests-error")
+    return CacheDisposition(False, "fetch-error")
 
 
 def is_cacheable_fetch(fetch: FetchResult) -> bool:
-    primary = fetch.primary_resource
-    return not (fetch.error and primary.status is None)
+    return cache_disposition(fetch).cacheable
 
 
 def default_db_path() -> Path:
@@ -58,6 +105,8 @@ class ResponseCache:
                 cookies_json TEXT NOT NULL,
                 body TEXT NOT NULL,
                 error TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL,
                 PRIMARY KEY (cache_key, resource_id)
             )
             """
@@ -122,7 +171,7 @@ class ResponseCache:
             """
             SELECT
                 resource_id, parent_id, kind, url, final_url, status,
-                headers_json, cookies_json, body, error
+                headers_json, cookies_json, body, error, created_at, updated_at
             FROM resources
             WHERE cache_key = ?
             ORDER BY resource_id
@@ -141,6 +190,8 @@ class ResponseCache:
                 cookies=json.loads(cookies_json),
                 body=body,
                 error=error,
+                cache_created_at=resource_created_at,
+                cache_updated_at=resource_updated_at,
             )
             for (
                 resource_id,
@@ -153,6 +204,8 @@ class ResponseCache:
                 cookies_json,
                 body,
                 error,
+                resource_created_at,
+                resource_updated_at,
             ) in resource_rows
         ]
         primary = next(
@@ -160,8 +213,6 @@ class ResponseCache:
             resources[0] if resources else None,
         )
         if primary is None:
-            return None
-        if primary.error and primary.status is None:
             return None
         script_srcs = [resource.url for resource in resources if resource.kind == "script"]
         return FetchResult(
@@ -189,7 +240,7 @@ class ResponseCache:
         fetch: FetchResult,
         tls_identity: str | None = None,
     ) -> None:
-        if not is_cacheable_fetch(fetch):
+        if not cache_disposition(fetch).cacheable:
             return
         now = int(time.time())
         key = self.key(target, mode, proxy, tls_identity)
@@ -229,8 +280,8 @@ class ResponseCache:
                 """
                 INSERT INTO resources (
                     cache_key, resource_id, parent_id, kind, url, final_url, status,
-                    headers_json, cookies_json, body, error
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    headers_json, cookies_json, body, error, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     key,
@@ -244,6 +295,8 @@ class ResponseCache:
                     json.dumps(resource.cookies, sort_keys=True),
                     resource.body,
                     resource.error,
+                    now,
+                    now,
                 ),
             )
         for index, resource in enumerate(resources):

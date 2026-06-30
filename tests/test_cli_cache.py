@@ -407,6 +407,7 @@ class CliCacheTests(unittest.TestCase):
             self.assertIn("fetch start", logs)
             self.assertIn("fetch end", logs)
             self.assertIn("cache write", logs)
+            self.assertIn("reason=http-status-200", logs)
             self.assertIn("providers complete", logs)
 
     def test_cache_hit_bypasses_sanity_check(self):
@@ -430,6 +431,8 @@ class CliCacheTests(unittest.TestCase):
                 result = scan_target("example.com", args_for(db), ["builtin"], ["builtin"])
 
             self.assertTrue(result["cached"])
+            self.assertIsNotNone(result["cache_created_at"])
+            self.assertIsNotNone(result["cache_updated_at"])
             self.sanity_mock.assert_not_called()
             fetch_mock.assert_not_called()
 
@@ -452,7 +455,30 @@ class CliCacheTests(unittest.TestCase):
             self.assertIn("sanity check failed", result["error"])
             again = scan_target("example.com", args_for(db), ["builtin"], ["builtin"])
 
-        self.assertFalse(again["cached"])
+        self.assertTrue(again["cached"])
+        self.assertEqual(again["error"], result["error"])
+        self.assertEqual(self.sanity_mock.call_count, 1)
+
+    def test_refresh_reruns_cached_sanity_failure(self):
+        self.set_sanity_result(
+            SanityResult(
+                "no-open-port",
+                "example.com",
+                (80, 443),
+                error="sanity check failed: no open port for example.com on 80,443",
+            )
+        )
+        with TemporaryDirectory() as tmpdir:
+            db = Path(tmpdir) / "results.db"
+            scan_target("example.com", args_for(db), ["builtin"], ["builtin"])
+            refreshed = scan_target(
+                "example.com",
+                args_for(db, refresh=True),
+                ["builtin"],
+                ["builtin"],
+            )
+
+        self.assertFalse(refreshed["cached"])
         self.assertEqual(self.sanity_mock.call_count, 2)
 
     def test_sanity_pass_calls_fetcher(self):

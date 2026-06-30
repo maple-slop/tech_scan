@@ -5,13 +5,13 @@ import time
 from pathlib import Path
 from typing import Any
 
-from .cache import ResponseCache, is_cacheable_fetch
+from .cache import ResponseCache, cache_disposition
 from .cli_config import fetch_identity, requests_verify
 from .diagnostics import Diagnostics
 from .fetchers.auto import browser_fallback_reason
 from .fetchers.browser import BrowserSession, fetch_browser
 from .fetchers.requests import fetch_requests
-from .models import FetchResult
+from .models import FetchResult, ResourceObservation
 from .normalize import expand_targets
 from .observations import collect_header_observations
 from .providers import build_providers, merge_findings
@@ -49,6 +49,8 @@ class ScanRunner:
                     "mode": self.args.mode,
                     "providers": self.provider_names,
                     "cached": False,
+                    "cache_created_at": None,
+                    "cache_updated_at": None,
                     "observations": [],
                     "technologies": [],
                     "error": str(exc),
@@ -76,7 +78,13 @@ class ScanRunner:
                         identity,
                     )
                     if cached_fetch:
-                        self.diagnostics.log(3, f"cache hit: target={target} mode={mode}")
+                        primary = cached_fetch.primary_resource
+                        self.diagnostics.log(
+                            3,
+                            f"cache hit: target={target} mode={mode} "
+                            f"resource_created_at={primary.cache_created_at} "
+                            f"resource_updated_at={primary.cache_updated_at}",
+                        )
                         return cached_fetch
                     self.diagnostics.log(3, f"cache miss: target={target} mode={mode}")
                 else:
@@ -94,7 +102,18 @@ class ScanRunner:
                         f"sanity skip fetcher: target={target} mode={mode} "
                         f"status={sanity.status}",
                     )
-                    return FetchResult(
+                    sanity_resource = ResourceObservation(
+                        id="sanity:0",
+                        kind="sanity",
+                        url=target,
+                        final_url=None,
+                        status=None,
+                        headers={},
+                        cookies={},
+                        body="",
+                        error=sanity.error,
+                    )
+                    sanity_fetch = FetchResult(
                         input=raw_target,
                         url=target,
                         final_url=None,
@@ -104,7 +123,22 @@ class ScanRunner:
                         body="",
                         mode=mode,
                         error=sanity.error,
+                        resources=[sanity_resource],
+                        primary_resource_id=sanity_resource.id,
                     )
+                    disposition = cache_disposition(sanity_fetch)
+                    if disposition.cacheable:
+                        cache.set(target, mode, self.args.proxy, sanity_fetch, identity)
+                        self.diagnostics.log(
+                            3,
+                            f"cache write: target={target} mode={mode} reason={disposition.reason}",
+                        )
+                    else:
+                        self.diagnostics.log(
+                            3,
+                            f"cache drop: target={target} mode={mode} reason={disposition.reason}",
+                        )
+                    return sanity_fetch
                 started = time.perf_counter()
                 self.diagnostics.log(3, f"fetch start: target={target} mode={mode}")
                 if mode == "browser":
@@ -138,11 +172,18 @@ class ScanRunner:
                     f"fetch end: target={target} mode={mode} status={fresh_fetch.status} "
                     f"error={bool(fresh_fetch.error)} elapsed={elapsed:.3f}s",
                 )
-                if is_cacheable_fetch(fresh_fetch):
+                disposition = cache_disposition(fresh_fetch)
+                if disposition.cacheable:
                     cache.set(target, mode, self.args.proxy, fresh_fetch, identity)
-                    self.diagnostics.log(3, f"cache write: target={target} mode={mode}")
+                    self.diagnostics.log(
+                        3,
+                        f"cache write: target={target} mode={mode} reason={disposition.reason}",
+                    )
                 else:
-                    self.diagnostics.log(3, f"cache drop: target={target} mode={mode} reason=fetch-error")
+                    self.diagnostics.log(
+                        3,
+                        f"cache drop: target={target} mode={mode} reason={disposition.reason}",
+                    )
                 return fresh_fetch
 
             if self.args.mode in {"requests", "auto"}:
@@ -174,6 +215,7 @@ class ScanRunner:
 
         assert fetch is not None
         merged = merge_findings(findings)
+        primary = fetch.primary_resource
         return {
             "input": raw_target,
             "url": fetch.url,
@@ -182,6 +224,8 @@ class ScanRunner:
             "mode": fetch.mode,
             "providers": self.provider_names,
             "cached": fetch.cached,
+            "cache_created_at": primary.cache_created_at,
+            "cache_updated_at": primary.cache_updated_at,
             "observations": collect_header_observations(fetch, merged),
             "technologies": [finding.to_json() for finding in merged],
             "error": fetch.error,

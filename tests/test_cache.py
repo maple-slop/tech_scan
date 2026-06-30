@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from tech_scan.cache import ResponseCache, is_cacheable_fetch
+from tech_scan.cache import ResponseCache, cache_disposition, is_cacheable_fetch
 from tech_scan.models import FetchResult, ResourceObservation
 
 
@@ -73,6 +73,33 @@ def make_primary_error_fetch(mode="browser"):
     )
 
 
+def make_sanity_fetch(error: str):
+    resource = ResourceObservation(
+        id="sanity:0",
+        kind="sanity",
+        url="https://example.com",
+        final_url=None,
+        status=None,
+        headers={},
+        cookies={},
+        body="",
+        error=error,
+    )
+    return FetchResult(
+        input="example.com",
+        url=resource.url,
+        final_url=None,
+        status=None,
+        headers={},
+        cookies={},
+        body="",
+        mode="requests",
+        error=error,
+        resources=[resource],
+        primary_resource_id=resource.id,
+    )
+
+
 class CacheTests(unittest.TestCase):
     def test_requests_observation_roundtrip(self):
         with TemporaryDirectory() as tmpdir:
@@ -92,6 +119,9 @@ class CacheTests(unittest.TestCase):
             self.assertEqual(cached.primary_resource.kind, "document")
             self.assertEqual(cached.script_resources[0].parent_id, cached.primary_resource_id)
             self.assertIn("React.version", cached.script_resources[0].body)
+            self.assertIsInstance(cached.primary_resource.cache_created_at, int)
+            self.assertIsInstance(cached.primary_resource.cache_updated_at, int)
+            self.assertIsInstance(cached.script_resources[0].cache_created_at, int)
 
     def test_cached_fetch_url_uses_concrete_cache_target(self):
         with TemporaryDirectory() as tmpdir:
@@ -117,8 +147,11 @@ class CacheTests(unittest.TestCase):
             self.assertEqual(cached.browser_globals, ["React", "__NEXT_DATA__"])
             self.assertEqual(cached.script_srcs, ["https://www.example.com/app.js"])
 
-    def test_primary_fetcher_error_is_not_cacheable(self):
-        self.assertFalse(is_cacheable_fetch(make_primary_error_fetch()))
+    def test_local_primary_fetcher_error_is_not_cacheable(self):
+        disposition = cache_disposition(make_primary_error_fetch())
+
+        self.assertFalse(disposition.cacheable)
+        self.assertEqual(disposition.reason, "local-client-error")
 
         with TemporaryDirectory() as tmpdir:
             with ResponseCache(Path(tmpdir) / "results.db") as cache:
@@ -128,19 +161,80 @@ class CacheTests(unittest.TestCase):
 
             self.assertIsNone(cached)
 
-    def test_stale_cached_primary_fetcher_error_is_ignored(self):
+    def test_requests_primary_fetcher_error_is_cacheable(self):
+        error = "connection failed"
+        resource = ResourceObservation(
+            id="document:0",
+            kind="document",
+            url="https://example.com",
+            final_url=None,
+            status=None,
+            headers={},
+            cookies={},
+            body="",
+            error=error,
+        )
+        fetch = FetchResult(
+            input="example.com",
+            url=resource.url,
+            final_url=None,
+            status=None,
+            headers={},
+            cookies={},
+            body="",
+            mode="requests",
+            error=error,
+            resources=[resource],
+            primary_resource_id=resource.id,
+        )
+
+        disposition = cache_disposition(fetch)
+        self.assertTrue(disposition.cacheable)
+        self.assertEqual(disposition.reason, "requests-error")
+
         with TemporaryDirectory() as tmpdir:
             with ResponseCache(Path(tmpdir) / "results.db") as cache:
-                cache.set("https://example.com", "browser", None, make_fetch("browser"))
-                cache.conn.execute(
-                    "UPDATE resources SET status = NULL, error = ? WHERE resource_id = ?",
-                    ("old browser executable missing", "document:0"),
-                )
-                cache.conn.commit()
+                cache.set("https://example.com", "requests", None, fetch)
 
-                cached = cache.get("https://example.com", "browser", None, 86400)
+                cached = cache.get("https://example.com", "requests", None, 86400)
 
-            self.assertIsNone(cached)
+            self.assertIsNotNone(cached)
+            assert cached is not None
+            self.assertEqual(cached.error, error)
+
+    def test_sanity_errors_are_cacheable(self):
+        cases = [
+            (
+                "sanity check failed: no open port for example.com on 443",
+                "sanity-no-open-port",
+            ),
+            (
+                "sanity check failed: DNS resolution failed for example.com: [Errno -2]",
+                "sanity-dns-error",
+            ),
+            (
+                "sanity check failed: invalid port target: missing host",
+                "sanity-invalid-port",
+            ),
+        ]
+
+        for error, reason in cases:
+            with self.subTest(reason=reason):
+                fetch = make_sanity_fetch(error)
+                disposition = cache_disposition(fetch)
+                self.assertTrue(disposition.cacheable)
+                self.assertEqual(disposition.reason, reason)
+
+                with TemporaryDirectory() as tmpdir:
+                    with ResponseCache(Path(tmpdir) / "results.db") as cache:
+                        cache.set("https://example.com", "requests", None, fetch)
+
+                        cached = cache.get("https://example.com", "requests", None, 86400)
+
+                    self.assertIsNotNone(cached)
+                    assert cached is not None
+                    self.assertEqual(cached.primary_resource.kind, "sanity")
+                    self.assertEqual(cached.error, error)
 
     def test_http_error_status_is_cacheable(self):
         fetch = make_fetch()

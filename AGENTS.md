@@ -83,17 +83,23 @@ Cache keys should depend on fetch identity:
 
 Do not key cache rows by provider set.
 
+Cache schema compatibility is intentionally tied to `FETCH_PROFILE_VERSION`. When the cache schema changes, bump the profile version directly; do not add migration/backfill code unless explicitly requested. Old cache DBs may require deletion or a new `--db` path.
+
 Fetch observations use normalized resource tables:
 
 - `fetches` identifies the scan target and primary resource.
-- `resources` stores documents, scripts, and future resource types with headers/body/error.
+- `resources` stores documents, scripts, sanity results, and future resource types with headers/body/error plus resource-level cache timestamps.
 - `resource_links` links a parent resource to subresources by resource ID.
+
+Output includes top-level `cache_created_at` and `cache_updated_at` from the primary resource. Live uncached results should report `None`; cached rows should surface the primary resource timestamps.
 
 Requests mode fetches directly visible `<script src>` resources and links them to the document resource. Third-party scripts are allowed unless blocked by vendored EasyList/EasyPrivacy rules. Keep script fetching bounded and make script failures non-fatal to the main document fetch.
 
 Redirects must stay on the same hostname. This prevents an app that redirects to a third-party SSO provider from being reported as the third-party site.
 
-Fresh fetches run a default-on DNS/TCP sanity check before requests or browser mode. Bare domains expand to `http://` and `https://` scans; each concrete URL checks its explicit port when present, otherwise `80` for HTTP or `443` for HTTPS. Cache hits bypass this check. Keep sanity failures uncached.
+Fresh fetches run a default-on DNS/TCP sanity check before requests or browser mode. Bare domains expand to `http://` and `https://` scans; each concrete URL checks its explicit port when present, otherwise `80` for HTTP or `443` for HTTPS. Cache hits bypass this check. Cache server/target-side sanity negatives such as `no-open-port`, `dns-error`, and `invalid-port`; `--refresh` is the way to force a recheck before TTL expiry.
+
+Cache successful responses, HTTP error statuses, and target/server-side negative outcomes. Do not cache local/client failures such as missing Playwright, missing Chromium/browser executable, browser launch failures, or local browser context/session startup failures. Cache diagnostics at verbosity 3 should include write/drop reasons.
 
 Fetchers receive one concrete URL and must fetch only that URL. Do not reintroduce protocol fallback inside fetchers; all HTTP/HTTPS expansion belongs before cache, sanity, and fetch in the scanner/normalization layer.
 
@@ -170,6 +176,8 @@ Protect these behaviors with tests when touched:
 - Human output includes all JSONL fields.
 - Raw observations stay separate from technologies and do not affect scoring.
 - Cache stores fetch observations and is independent of provider set.
+- Cache policy distinguishes server/target-side negatives from local/client failures.
+- Resource-level cache timestamps round-trip and appear in output.
 - Scanner orchestration preserves cache, sanity, fetcher, provider, and auto-fallback behavior.
 - Auto mode does not use browser for small static pages.
 - Same-host redirect restriction.

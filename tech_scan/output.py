@@ -122,6 +122,8 @@ def format_human(result: dict[str, Any], color: bool = True) -> str:
             f"  mode: {result.get('mode')}",
             f"  providers: {', '.join(result.get('providers') or [])}",
             f"  cached: {result.get('cached')}",
+            f"  cache_created_at: {result.get('cache_created_at')}",
+            f"  cache_updated_at: {result.get('cache_updated_at')}",
             f"  error: {colorize(str(error), 'red', color) if error else None}",
         ]
     )
