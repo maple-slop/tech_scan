@@ -40,6 +40,12 @@ Output modes:
 
 Human output must include all fields present in JSONL.
 
+Raw observations:
+
+- Results may include top-level `observations`, currently non-scoring raw header context for signature-relevant headers such as `Server`, `X-Powered-By`, `Via`, CDN/WAF headers, and selected platform/cache headers.
+- Observations are not technologies, findings, confidence, or evidence. They must not affect provider scoring or summaries.
+- Suppress a raw header observation when the same exact `Header: value` string is already used as source-backed finding evidence.
+
 Diagnostics:
 
 - `--verbosity 0`: default, short error messages only.
@@ -114,6 +120,8 @@ Keep builtin rules conservative and evidence-driven. Each finding should include
 
 `wappalyzergo` uses vendored `projectdiscovery/wappalyzergo` fingerprint JSON and must not shell out to subprocess wrappers. Keep the vendored upstream license and attribution beside the data. Do not expose user-supplied Wappalyzer JSON as a selectable provider; public provider choices are only `builtin`, `wappalyzergo`, and `all`.
 
+Builtin may borrow high-signal Wappalyzer-style signatures only when they fit existing dimensions and can produce clear evidence. Keep ambiguous or broad coverage in `wappalyzergo`; do not bulk-import fingerprints or add broad CMS/payment/analytics/auth/ad reporting to builtin.
+
 Do not add public imports for internal provider or fetcher helper APIs in package `__init__.py` files. Import implementation helpers from their owning modules, such as `tech_scan.url_policy`, `tech_scan.html_extract`, `tech_scan.fetchers.auto`, or `tech_scan.providers.wappalyzer_engine`.
 
 uBlock Origin Lite is vendored under fetcher data for browser mode. Keep its upstream license and attribution beside the extension files, and include it in package-data checks when packaging behavior changes.
@@ -160,7 +168,8 @@ Protect these behaviors with tests when touched:
 
 - JSONL output stability.
 - Human output includes all JSONL fields.
-- Cache stores observations and is independent of provider set.
+- Raw observations stay separate from technologies and do not affect scoring.
+- Cache stores fetch observations and is independent of provider set.
 - Scanner orchestration preserves cache, sanity, fetcher, provider, and auto-fallback behavior.
 - Auto mode does not use browser for small static pages.
 - Same-host redirect restriction.

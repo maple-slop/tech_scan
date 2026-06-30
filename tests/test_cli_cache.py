@@ -492,6 +492,60 @@ class CliCacheTests(unittest.TestCase):
 
         self.assertIn("sanity skip fetcher", stderr.getvalue())
 
+    def test_unrecognized_signature_headers_are_raw_observations(self):
+        with TemporaryDirectory() as tmpdir:
+            db = Path(tmpdir) / "results.db"
+            fetch = FetchResult(
+                input="example.com",
+                url="https://example.com",
+                final_url="https://example.com",
+                status=200,
+                headers={
+                    "server": "WeirdServer/9.9",
+                    "x-powered-by": "SomethingCustom",
+                },
+                cookies={},
+                body="ok",
+                mode="requests",
+            )
+            with patch("tech_scan.scanner.fetch_requests", return_value=fetch):
+                result = scan_target("example.com", args_for(db), ["builtin"], ["builtin"])
+
+        self.assertEqual(
+            result["observations"],
+            [
+                {"kind": "header", "name": "Server", "value": "WeirdServer/9.9"},
+                {"kind": "header", "name": "X-Powered-By", "value": "SomethingCustom"},
+            ],
+        )
+        self.assertEqual(result["technologies"], [])
+
+    def test_recognized_header_evidence_is_not_duplicated_as_observation(self):
+        with TemporaryDirectory() as tmpdir:
+            db = Path(tmpdir) / "results.db"
+            fetch = FetchResult(
+                input="example.com",
+                url="https://example.com",
+                final_url="https://example.com",
+                status=200,
+                headers={
+                    "server": "nginx",
+                    "x-powered-by": "SomethingCustom",
+                },
+                cookies={},
+                body="ok",
+                mode="requests",
+            )
+            with patch("tech_scan.scanner.fetch_requests", return_value=fetch):
+                result = scan_target("example.com", args_for(db), ["builtin"], ["builtin"])
+
+        self.assertEqual(
+            result["observations"],
+            [{"kind": "header", "name": "X-Powered-By", "value": "SomethingCustom"}],
+        )
+        self.assertEqual(result["technologies"][0]["name"], "nginx")
+        self.assertIn("Server: nginx", result["technologies"][0]["evidence"])
+
 
 if __name__ == "__main__":
     unittest.main()

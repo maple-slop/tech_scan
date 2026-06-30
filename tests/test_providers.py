@@ -109,6 +109,88 @@ class ProviderTests(unittest.TestCase):
 
         self.assertIn("React", names(BuiltinProvider().detect(fetch)))
 
+    def test_builtin_detects_wappalyzer_informed_server_signatures(self):
+        cases = [
+            ({"Server": "openresty/1.25.3"}, "OpenResty", "Server: openresty/1.25.3"),
+            ({"Server": "Tengine"}, "Tengine", "Server: Tengine"),
+            ({"Server": "Caddy"}, "Caddy", "Server: Caddy"),
+            ({"Server": "lighttpd/1.4.76"}, "lighttpd", "Server: lighttpd/1.4.76"),
+            ({"Server": "gunicorn/22.0.0"}, "gunicorn", "Server: gunicorn/22.0.0"),
+            ({"Server": "Werkzeug/3.0.0 Python/3.12"}, "Werkzeug", "Server: Werkzeug/3.0.0 Python/3.12"),
+            ({"Server": "CherryPy/18.9.0"}, "CherryPy", "Server: CherryPy/18.9.0"),
+            ({"Server": "WebLogic Server 14"}, "WebLogic", "Server: WebLogic Server 14"),
+            ({"Server": "GSE"}, "OpenGSE", "Server: GSE"),
+            ({"Server": "BigIP"}, "F5 BIG-IP", "Server: BigIP"),
+            ({"X-CDN": "Imperva"}, "Imperva", "X-CDN: Imperva"),
+            ({"X-NF-Request-ID": "01ABC"}, "Netlify", "X-NF-Request-ID: 01ABC"),
+            ({"X-Vercel-Id": "iad1::abc"}, "Vercel", "X-Vercel-Id: iad1::abc"),
+            ({"Via": "1.1 vegur"}, "Heroku", "Via: 1.1 vegur"),
+            ({"Server": "AmazonS3"}, "Amazon S3", "Server: AmazonS3"),
+            ({"X-LiteSpeed-Cache": "hit"}, "LiteSpeed Cache", "X-LiteSpeed-Cache: hit"),
+        ]
+
+        for headers, expected, evidence in cases:
+            with self.subTest(expected=expected):
+                by_name = {finding.name: finding for finding in BuiltinProvider().detect(make_fetch(headers=headers))}
+                self.assertIn(expected, by_name)
+                self.assertIn(evidence, by_name[expected].evidence)
+
+    def test_builtin_detects_wappalyzer_informed_backend_signatures(self):
+        cases = [
+            (make_fetch(headers={"Server": "Werkzeug/3.0.0 Python/3.12"}), {"Flask", "Python"}),
+            (make_fetch(headers={"Server": "Ruby/3.3.0"}), {"Ruby"}),
+            (make_fetch(headers={"X-Powered-By": "Koa"}), {"Koa", "Node.js"}),
+            (make_fetch(headers={"X-Powered-By": "hono"}), {"Hono", "Node.js"}),
+            (make_fetch(headers={"X-Powered-By": "Sails"}), {"Sails.js", "Node.js"}),
+            (make_fetch(headers={"X-Powered-By": "total.js"}), {"total.js"}),
+            (make_fetch(headers={"X-Powered-By": "bun"}), {"Bun"}),
+            (make_fetch(cookies={"sf_redirect": "1"}), {"Symfony", "PHP"}),
+            (make_fetch(cookies={"ci_session": "1"}), {"CodeIgniter", "PHP"}),
+            (make_fetch(cookies={"cakephp": "1"}), {"CakePHP", "PHP"}),
+            (make_fetch(cookies={"yii_csrf_token": "1"}), {"Yii", "PHP"}),
+            (make_fetch(body='<div wire:click="save"></div>'), {"Livewire", "PHP"}),
+            (make_fetch(cookies={"CFTOKEN": "secret"}, body='<script src="/cfajax/foo.js"></script>'), {"Adobe ColdFusion"}),
+        ]
+
+        for fetch, expected in cases:
+            with self.subTest(expected=expected):
+                self.assertLessEqual(expected, names(BuiltinProvider().detect(fetch)))
+
+    def test_builtin_detects_wappalyzer_informed_frontend_signatures(self):
+        cases = [
+            (make_fetch(body='<html ng-app="app"></html>'), "AngularJS"),
+            (make_fetch(body='<div x-data="{open:false}"></div>'), "Alpine.js"),
+            (make_fetch(body='<meta name="generator" content="Astro v4.0.0">'), "Astro"),
+            (make_fetch(body='<div data-controller="hello"></div>'), "Stimulus"),
+            (make_fetch(body='<script src="/htmx.min.js"></script>'), "htmx"),
+            (make_fetch(body='<link rel="import" href="/polymer.html">'), "Polymer"),
+            (make_fetch(globals_=["__remixContext"]), "Remix"),
+            (make_fetch(body='<meta name="generator" content="SvelteKit">'), "SvelteKit"),
+        ]
+
+        for fetch, expected in cases:
+            with self.subTest(expected=expected):
+                self.assertIn(expected, names(BuiltinProvider().detect(fetch)))
+
+    def test_builtin_implied_runtime_does_not_come_from_generic_headers(self):
+        generic = BuiltinProvider().detect(
+            make_fetch(headers={"X-Powered-By": "SomethingCustom", "Server": "WeirdServer/9.9"})
+        )
+
+        detected_names = names(generic)
+        self.assertNotIn("Node.js", detected_names)
+        self.assertNotIn("PHP", detected_names)
+        self.assertNotIn("Ruby", detected_names)
+        self.assertNotIn("Python", detected_names)
+
+    def test_builtin_cookie_value_rules_still_do_not_expose_raw_values(self):
+        detected = BuiltinProvider().detect(
+            make_fetch(cookies={"laravel_session": "eyJpdiI6InNlY3JldCJ9"})
+        )
+        laravel = next(finding for finding in detected if finding.name == "Laravel")
+
+        self.assertNotIn("eyJpdiI6InNlY3JldCJ9", "\n".join(laravel.evidence))
+
     def test_merge_findings_combines_duplicate_provider_evidence(self):
         fetch = make_fetch(headers={"Server": "nginx"})
         finding = BuiltinProvider().detect(fetch)[0]

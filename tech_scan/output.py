@@ -125,6 +125,16 @@ def format_human(result: dict[str, Any], color: bool = True) -> str:
             f"  error: {colorize(str(error), 'red', color) if error else None}",
         ]
     )
+    observations = result.get("observations") or []
+    if observations:
+        lines.append("  observations:")
+        for item in observations:
+            kind = item.get("kind")
+            name = item.get("name")
+            value = item.get("value")
+            lines.append(f"     {kind}: {name}: {value}")
+    else:
+        lines.append("  observations: none")
 
     if not technologies:
         lines.append("  technologies: none")

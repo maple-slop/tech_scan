@@ -13,6 +13,7 @@ from .fetchers.browser import BrowserSession, fetch_browser
 from .fetchers.requests import fetch_requests
 from .models import FetchResult
 from .normalize import expand_targets
+from .observations import collect_header_observations
 from .providers import build_providers, merge_findings
 from .sanity import check_target_ports
 
@@ -48,6 +49,7 @@ class ScanRunner:
                     "mode": self.args.mode,
                     "providers": self.provider_names,
                     "cached": False,
+                    "observations": [],
                     "technologies": [],
                     "error": str(exc),
                 }
@@ -180,6 +182,7 @@ class ScanRunner:
             "mode": fetch.mode,
             "providers": self.provider_names,
             "cached": fetch.cached,
+            "observations": collect_header_observations(fetch, merged),
             "technologies": [finding.to_json() for finding in merged],
             "error": fetch.error,
         }

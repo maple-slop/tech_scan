@@ -27,6 +27,7 @@ RESULT = {
     "mode": "requests",
     "providers": ["builtin"],
     "cached": True,
+    "observations": [],
     "technologies": [
         {
             "name": "Apache",
@@ -55,6 +56,7 @@ class OutputTests(unittest.TestCase):
         self.assertIn("providers: builtin", output)
         self.assertIn("cached: True", output)
         self.assertIn("error: None", output)
+        self.assertIn("observations: none", output)
 
     def test_human_format_includes_full_technology_information(self):
         output = format_human(RESULT, color=False)
@@ -75,6 +77,19 @@ class OutputTests(unittest.TestCase):
         result["technologies"] = []
 
         self.assertIn("technologies: none", format_human(result, color=False))
+
+    def test_human_format_includes_raw_observations(self):
+        result = dict(RESULT)
+        result["observations"] = [
+            {"kind": "header", "name": "Server", "value": "WeirdServer/9.9"},
+            {"kind": "header", "name": "X-Powered-By", "value": "SomethingCustom"},
+        ]
+
+        output = format_human(result, color=False)
+
+        self.assertIn("observations:", output)
+        self.assertIn("header: Server: WeirdServer/9.9", output)
+        self.assertIn("header: X-Powered-By: SomethingCustom", output)
 
     def test_ca_bundle_defaults_from_known_environment_variables(self):
         with patch.dict(
