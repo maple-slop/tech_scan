@@ -349,11 +349,11 @@ class _WappalyzerFingerprintProvider(Provider):
             attr = str(raw_attr).lower()
             for pattern_value in _as_list(raw_value):
                 pattern = _parse_wappalyzer_pattern(pattern_value)
-                if any(
-                    _pattern_matches(pattern, _node_attributes(node).get(attr, ""))
-                    for node in nodes
-                ):
-                    confidence = max(confidence, pattern.confidence)
+                for node in nodes:
+                    attributes = _node_attributes(node)
+                    if attr in attributes and _pattern_matches(pattern, attributes[attr]):
+                        confidence = max(confidence, pattern.confidence)
+                        break
         return confidence
 
     def _add_implied(self, app_name: str, matched: dict[str, Finding], seen: set[str]) -> None:

@@ -317,6 +317,32 @@ class ProviderTests(unittest.TestCase):
         self.assertIn("Angular", by_name)
         self.assertEqual(by_name["Angular"].confidence, 91)
 
+    def test_wappalyzergo_dom_empty_attribute_pattern_requires_attribute_presence(self):
+        provider = WappalyzerGoProvider(
+            {
+                "apps": {
+                    "SvelteKit": {
+                        "cats": [66],
+                        "dom": {
+                            "a,body": {
+                                "attributes": {
+                                    "data-sveltekit-preload-data": "",
+                                    "sveltekit:prefetch": "",
+                                }
+                            }
+                        },
+                        "implies": ["Svelte", "Node.js"],
+                    },
+                    "Svelte": {"cats": [12]},
+                    "Node.js": {"cats": [27]},
+                }
+            }
+        )
+
+        detected = provider.detect(make_fetch(body="<body><a href='/post'>post</a></body>"))
+
+        self.assertEqual(detected, [])
+
     def test_wappalyzergo_dom_direct_attribute_key_matches_selected_node_attributes(self):
         provider = WappalyzerGoProvider(
             {
