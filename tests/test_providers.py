@@ -262,6 +262,115 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(detected[0].name, "React")
         self.assertEqual(detected[0].confidence, 75)
 
+    def test_wappalyzergo_dom_exists_matches_captured_html(self):
+        provider = WappalyzerGoProvider(
+            {
+                "apps": {
+                    "Svelte": {
+                        "cats": [12],
+                        "dom": {"[class*='svelte-']": {"exists": r"\;confidence:88"}},
+                    }
+                }
+            }
+        )
+
+        detected = provider.detect(make_fetch(body='<main class="page svelte-abc"></main>'))
+        by_name = {finding.name: finding for finding in detected}
+
+        self.assertIn("Svelte", by_name)
+        self.assertEqual(by_name["Svelte"].confidence, 88)
+        self.assertIn("wappalyzer dom: [class*='svelte-']", by_name["Svelte"].evidence)
+
+    def test_wappalyzergo_dom_text_matches_selected_node_text(self):
+        provider = WappalyzerGoProvider(
+            {
+                "apps": {
+                    "Apereo CAS": {
+                        "cats": [18],
+                        "dom": {"head > title": {"text": "Central Authentication Service"}},
+                    }
+                }
+            }
+        )
+
+        detected = provider.detect(
+            make_fetch(body="<html><head><title>CAS - Central Authentication Service</title></head></html>")
+        )
+
+        self.assertIn("Apereo CAS", names(detected))
+
+    def test_wappalyzergo_dom_attributes_match_selected_node_attributes(self):
+        provider = WappalyzerGoProvider(
+            {
+                "apps": {
+                    "Angular": {
+                        "cats": [12],
+                        "dom": {"[ng-version]": {"attributes": {"ng-version": r"^17\.\;confidence:91"}}},
+                    }
+                }
+            }
+        )
+
+        detected = provider.detect(make_fetch(body='<app-root ng-version="17.3.2"></app-root>'))
+        by_name = {finding.name: finding for finding in detected}
+
+        self.assertIn("Angular", by_name)
+        self.assertEqual(by_name["Angular"].confidence, 91)
+
+    def test_wappalyzergo_dom_direct_attribute_key_matches_selected_node_attributes(self):
+        provider = WappalyzerGoProvider(
+            {
+                "apps": {
+                    "GetYourGuide": {
+                        "cats": [12],
+                        "dom": {"img.hero": {"src": "cdn\\.getyourguide\\.com"}},
+                    }
+                }
+            }
+        )
+
+        detected = provider.detect(
+            make_fetch(body='<img class="hero" src="https://cdn.getyourguide.com/tour.jpg">')
+        )
+
+        self.assertIn("GetYourGuide", names(detected))
+
+    def test_wappalyzergo_dom_invalid_selectors_are_ignored(self):
+        provider = WappalyzerGoProvider(
+            {
+                "apps": {
+                    "Broken Selector": {
+                        "cats": [12],
+                        "dom": {"div[": {"exists": ""}},
+                    },
+                    "Valid Selector": {
+                        "cats": [12],
+                        "dom": {".valid": {"exists": ""}},
+                    },
+                }
+            }
+        )
+
+        detected = provider.detect(make_fetch(body='<div class="valid"></div>'))
+
+        self.assertEqual(names(detected), {"Valid Selector"})
+
+    def test_wappalyzergo_dom_properties_do_not_match_static_html(self):
+        provider = WappalyzerGoProvider(
+            {
+                "apps": {
+                    "React": {
+                        "cats": [12],
+                        "dom": {"body > div": {"properties": {"_reactRootContainer": ""}}},
+                    }
+                }
+            }
+        )
+
+        detected = provider.detect(make_fetch(body="<body><div></div></body>"))
+
+        self.assertEqual(detected, [])
+
     def test_url_suffixes_detect_backend_tech(self):
         cases = [
             ("https://example.com/login.aspx", "ASP.NET"),

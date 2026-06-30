@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from selectolax.parser import HTMLParser
+
 from tech_scan.html_extract import extract_meta, extract_script_srcs
 from tech_scan.models import (
     DIM_BACKEND,
@@ -66,6 +68,11 @@ class _WappalyzerPattern:
     confidence: int
 
 
+@dataclass(frozen=True)
+class _DomContext:
+    parser: HTMLParser | None
+
+
 def _as_list(value: object) -> list[object]:
     if value is None:
         return []
@@ -97,6 +104,32 @@ def _pattern_matches(pattern: _WappalyzerPattern, haystack: str) -> bool:
         return pattern.pattern.lower() in haystack.lower()
 
 
+def _dom_context(body: str) -> _DomContext:
+    if not body:
+        return _DomContext(None)
+    try:
+        return _DomContext(HTMLParser(body))
+    except Exception:
+        return _DomContext(None)
+
+
+def _node_text(node: object) -> str:
+    text_method = getattr(node, "text", None)
+    if not callable(text_method):
+        return ""
+    try:
+        return str(text_method(separator=" ", strip=True))
+    except TypeError:
+        return str(text_method())
+
+
+def _node_attributes(node: object) -> dict[str, str]:
+    raw = getattr(node, "attributes", None)
+    if not isinstance(raw, dict):
+        return {}
+    return {str(key).lower(): str(value) for key, value in raw.items()}
+
+
 class _WappalyzerFingerprintProvider(Provider):
     def __init__(
         self,
@@ -120,11 +153,12 @@ class _WappalyzerFingerprintProvider(Provider):
         script_srcs = fetch.script_srcs or extract_script_srcs(body)
         script_bodies = fetch.script_bodies
         meta = extract_meta(body)
+        dom = _dom_context(body)
 
         for app_name, app in self.apps.items():
             if not isinstance(app, dict):
                 continue
-            finding = self._detect_app(app_name, app, fetch, body, script_srcs, script_bodies, meta)
+            finding = self._detect_app(app_name, app, fetch, body, script_srcs, script_bodies, meta, dom)
             if finding:
                 matched[app_name] = finding
 
@@ -142,6 +176,7 @@ class _WappalyzerFingerprintProvider(Provider):
         script_srcs: list[str],
         script_bodies: list[str],
         meta: dict[str, list[str]],
+        dom: _DomContext,
     ) -> Finding | None:
         dimension = self._dimension_for_app(app_name, app)
         if not dimension:
@@ -166,6 +201,9 @@ class _WappalyzerFingerprintProvider(Provider):
         ))
         confidence = max(confidence, self._match_text_patterns(
             app.get("js"), [*fetch.browser_globals, *script_bodies], "wappalyzer js", evidence
+        ))
+        confidence = max(confidence, self._match_dom_patterns(
+            app.get("dom"), dom, evidence
         ))
 
         if not evidence:
@@ -237,8 +275,85 @@ class _WappalyzerFingerprintProvider(Provider):
             pattern = _parse_wappalyzer_pattern(pattern_value)
             if any(_pattern_matches(pattern, haystack) for haystack in haystacks):
                 confidence = max(confidence, pattern.confidence)
+                if evidence_item and evidence_item not in evidence:
+                    evidence.append(evidence_item)
+        return confidence
+
+    def _match_dom_patterns(
+        self,
+        raw_patterns: object,
+        dom: _DomContext,
+        evidence: list[str],
+    ) -> int:
+        if dom.parser is None or not isinstance(raw_patterns, dict):
+            return 0
+
+        confidence = 0
+        for raw_selector, raw_tests in raw_patterns.items():
+            if not isinstance(raw_tests, dict):
+                continue
+            selector = str(raw_selector)
+            try:
+                nodes = list(dom.parser.css(selector))
+            except Exception:
+                continue
+            if not nodes:
+                continue
+
+            selector_confidence = 0
+            for test_name, test_value in raw_tests.items():
+                key = str(test_name)
+                if key == "properties":
+                    continue
+                if key == "exists":
+                    pattern = _parse_wappalyzer_pattern(test_value)
+                    selector_confidence = max(selector_confidence, pattern.confidence)
+                elif key == "text":
+                    selector_confidence = max(
+                        selector_confidence,
+                        self._match_text_patterns(
+                            test_value,
+                            [_node_text(node) for node in nodes],
+                            "",
+                            [],
+                        ),
+                    )
+                elif key == "attributes":
+                    selector_confidence = max(
+                        selector_confidence,
+                        self._match_dom_attributes(test_value, nodes),
+                    )
+                else:
+                    selector_confidence = max(
+                        selector_confidence,
+                        self._match_dom_attributes({key: test_value}, nodes),
+                    )
+
+            if selector_confidence:
+                confidence = max(confidence, selector_confidence)
+                evidence_item = f"wappalyzer dom: {selector}"
                 if evidence_item not in evidence:
                     evidence.append(evidence_item)
+        return confidence
+
+    def _match_dom_attributes(
+        self,
+        raw_patterns: object,
+        nodes: list[object],
+    ) -> int:
+        if not isinstance(raw_patterns, dict):
+            return 0
+
+        confidence = 0
+        for raw_attr, raw_value in raw_patterns.items():
+            attr = str(raw_attr).lower()
+            for pattern_value in _as_list(raw_value):
+                pattern = _parse_wappalyzer_pattern(pattern_value)
+                if any(
+                    _pattern_matches(pattern, _node_attributes(node).get(attr, ""))
+                    for node in nodes
+                ):
+                    confidence = max(confidence, pattern.confidence)
         return confidence
 
     def _add_implied(self, app_name: str, matched: dict[str, Finding], seen: set[str]) -> None:
