@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from tech_scan.cache import ResponseCache
+from tech_scan.cache import ResponseCache, is_cacheable_fetch
 from tech_scan.models import FetchResult, ResourceObservation
 
 
@@ -45,6 +45,34 @@ def make_fetch(mode="requests"):
     )
 
 
+def make_primary_error_fetch(mode="browser"):
+    error = "browser executable missing"
+    document = ResourceObservation(
+        id="document:0",
+        kind="document",
+        url="https://example.com",
+        final_url=None,
+        status=None,
+        headers={},
+        cookies={},
+        body="",
+        error=error,
+    )
+    return FetchResult(
+        input="example.com",
+        url=document.url,
+        final_url=None,
+        status=None,
+        headers={},
+        cookies={},
+        body="",
+        mode=mode,
+        error=error,
+        resources=[document],
+        primary_resource_id=document.id,
+    )
+
+
 class CacheTests(unittest.TestCase):
     def test_requests_observation_roundtrip(self):
         with TemporaryDirectory() as tmpdir:
@@ -76,6 +104,67 @@ class CacheTests(unittest.TestCase):
             assert cached is not None
             self.assertEqual(cached.browser_globals, ["React", "__NEXT_DATA__"])
             self.assertEqual(cached.script_srcs, ["https://www.example.com/app.js"])
+
+    def test_primary_fetcher_error_is_not_cacheable(self):
+        self.assertFalse(is_cacheable_fetch(make_primary_error_fetch()))
+
+        with TemporaryDirectory() as tmpdir:
+            with ResponseCache(Path(tmpdir) / "results.db") as cache:
+                cache.set("https://example.com", "browser", None, make_primary_error_fetch())
+
+                cached = cache.get("https://example.com", "browser", None, 86400)
+
+            self.assertIsNone(cached)
+
+    def test_stale_cached_primary_fetcher_error_is_ignored(self):
+        with TemporaryDirectory() as tmpdir:
+            with ResponseCache(Path(tmpdir) / "results.db") as cache:
+                cache.set("https://example.com", "browser", None, make_fetch("browser"))
+                cache.conn.execute(
+                    "UPDATE resources SET status = NULL, error = ? WHERE resource_id = ?",
+                    ("old browser executable missing", "document:0"),
+                )
+                cache.conn.commit()
+
+                cached = cache.get("https://example.com", "browser", None, 86400)
+
+            self.assertIsNone(cached)
+
+    def test_http_error_status_is_cacheable(self):
+        fetch = make_fetch()
+        document = ResourceObservation(
+            id="document:0",
+            kind="document",
+            url="https://example.com",
+            final_url="https://example.com",
+            status=403,
+            headers={"server": "cloudflare"},
+            cookies={},
+            body="Forbidden",
+        )
+        fetch = FetchResult(
+            input=fetch.input,
+            url=document.url,
+            final_url=document.final_url,
+            status=document.status,
+            headers=document.headers,
+            cookies=document.cookies,
+            body=document.body,
+            mode=fetch.mode,
+            resources=[document],
+            primary_resource_id=document.id,
+        )
+
+        self.assertTrue(is_cacheable_fetch(fetch))
+        with TemporaryDirectory() as tmpdir:
+            with ResponseCache(Path(tmpdir) / "results.db") as cache:
+                cache.set("https://example.com", "requests", None, fetch)
+
+                cached = cache.get("https://example.com", "requests", None, 86400)
+
+            self.assertIsNotNone(cached)
+            assert cached is not None
+            self.assertEqual(cached.status, 403)
 
     def test_ttl_expiry_returns_none(self):
         with TemporaryDirectory() as tmpdir:

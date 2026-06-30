@@ -149,6 +149,41 @@ class CliCacheTests(unittest.TestCase):
             self.assertEqual(fetch_mock.call_count, 2)
             self.assertEqual(second["status"], 200)
 
+    def test_browser_fetcher_failure_is_not_cached(self):
+        with TemporaryDirectory() as tmpdir:
+            db = Path(tmpdir) / "results.db"
+            failed_fetch = FetchResult(
+                input="example.com",
+                url="https://example.com",
+                final_url=None,
+                status=None,
+                headers={},
+                cookies={},
+                body="",
+                mode="browser",
+                error="browser executable missing",
+            )
+            successful_fetch = FetchResult(
+                input="example.com",
+                url="https://example.com",
+                final_url="https://example.com",
+                status=200,
+                headers={"server": "example"},
+                cookies={},
+                body="<html><body>Example Domain</body></html>",
+                mode="browser",
+            )
+            args = args_for(db, mode="browser")
+
+            with patch("tech_scan.cli.fetch_browser", side_effect=[failed_fetch, successful_fetch]) as fetch_mock:
+                first = scan_target("example.com", args, ["builtin"], ["builtin"])
+                second = scan_target("example.com", args, ["builtin"], ["builtin"])
+
+            self.assertFalse(first["cached"])
+            self.assertFalse(second["cached"])
+            self.assertEqual(fetch_mock.call_count, 2)
+            self.assertEqual(second["status"], 200)
+
 
 if __name__ == "__main__":
     unittest.main()

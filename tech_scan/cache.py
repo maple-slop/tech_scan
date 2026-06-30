@@ -12,6 +12,11 @@ from .models import FetchResult, ResourceObservation
 FETCH_PROFILE_VERSION = "v4"
 
 
+def is_cacheable_fetch(fetch: FetchResult) -> bool:
+    primary = fetch.primary_resource
+    return not (fetch.error and primary.status is None)
+
+
 def default_db_path() -> Path:
     cache_home = os.environ.get("XDG_CACHE_HOME")
     base = Path(cache_home).expanduser() if cache_home else Path.home() / ".cache"
@@ -156,6 +161,8 @@ class ResponseCache:
         )
         if primary is None:
             return None
+        if primary.error and primary.status is None:
+            return None
         script_srcs = [resource.url for resource in resources if resource.kind == "script"]
         return FetchResult(
             input=target,
@@ -182,6 +189,8 @@ class ResponseCache:
         fetch: FetchResult,
         tls_identity: str | None = None,
     ) -> None:
+        if not is_cacheable_fetch(fetch):
+            return
         now = int(time.time())
         key = self.key(target, mode, proxy, tls_identity)
         primary = fetch.primary_resource
