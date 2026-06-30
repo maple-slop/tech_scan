@@ -337,7 +337,8 @@ def scan_target(
     merged = merge_findings(findings)
     result = {
         "input": raw_target,
-        "url": fetch.final_url or fetch.url,
+        "url": fetch.url,
+        "final_url": fetch.final_url,
         "status": fetch.status,
         "mode": fetch.mode,
         "providers": provider_names,
@@ -363,6 +364,7 @@ def scan_input(
             {
                 "input": raw_target,
                 "url": None,
+                "final_url": None,
                 "status": None,
                 "mode": args.mode,
                 "providers": provider_names,

@@ -22,6 +22,7 @@ from tech_scan.sanity import SanityResult
 RESULT = {
     "input": "example.com",
     "url": "https://example.com",
+    "final_url": "https://example.com",
     "status": 200,
     "mode": "requests",
     "providers": ["builtin"],
@@ -48,6 +49,7 @@ class OutputTests(unittest.TestCase):
 
         self.assertIn("input: example.com", output)
         self.assertIn("url: https://example.com", output)
+        self.assertIn("final_url: https://example.com", output)
         self.assertIn("status: 200", output)
         self.assertIn("mode: requests", output)
         self.assertIn("providers: builtin", output)

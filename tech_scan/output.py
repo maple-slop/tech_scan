@@ -117,6 +117,7 @@ def format_human(result: dict[str, Any], color: bool = True) -> str:
         [
             f"  input: {result.get('input')}",
             f"  url: {result.get('url')}",
+            f"  final_url: {result.get('final_url')}",
             f"  status: {colorize(status_text, status_style, color)}",
             f"  mode: {result.get('mode')}",
             f"  providers: {', '.join(result.get('providers') or [])}",

@@ -93,6 +93,38 @@ class CliCacheTests(unittest.TestCase):
         self.assertEqual([result["url"] for result in results], ["http://example.com", "https://example.com"])
         self.assertEqual([call.args[1] for call in fetch_mock.call_args_list], ["http://example.com", "https://example.com"])
 
+    def test_scan_input_preserves_concrete_url_when_http_redirects_to_https(self):
+        with TemporaryDirectory() as tmpdir:
+            db = Path(tmpdir) / "results.db"
+            fetches = [
+                FetchResult(
+                    input="example.com",
+                    url="http://example.com",
+                    final_url="https://example.com",
+                    status=301,
+                    headers={},
+                    cookies={},
+                    body="",
+                    mode="requests",
+                ),
+                FetchResult(
+                    input="example.com",
+                    url="https://example.com",
+                    final_url="https://example.com",
+                    status=200,
+                    headers={},
+                    cookies={},
+                    body="https",
+                    mode="requests",
+                ),
+            ]
+
+            with patch("tech_scan.cli.fetch_requests", side_effect=fetches):
+                results = scan_input("example.com", args_for(db), ["builtin"], ["builtin"])
+
+        self.assertEqual([result["url"] for result in results], ["http://example.com", "https://example.com"])
+        self.assertEqual([result["final_url"] for result in results], ["https://example.com", "https://example.com"])
+
     def test_scan_input_explicit_scheme_uses_single_concrete_target(self):
         with TemporaryDirectory() as tmpdir:
             db = Path(tmpdir) / "results.db"
