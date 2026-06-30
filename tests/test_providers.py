@@ -217,6 +217,65 @@ class ProviderTests(unittest.TestCase):
         self.assertIn("Laravel", by_name)
         self.assertIn("laravel encrypted cookie", by_name["Laravel"].evidence)
 
+    def test_generic_csrf_token_meta_does_not_identify_laravel_or_rails(self):
+        detected = BuiltinProvider().detect(
+            make_fetch(body='<meta name="csrf-token" content="abc">')
+        )
+
+        detected_names = names(detected)
+        self.assertNotIn("Laravel", detected_names)
+        self.assertNotIn("Ruby on Rails", detected_names)
+
+    def test_rails_specific_markers(self):
+        fetch = make_fetch(
+            headers={"X-Powered-By": "Phusion Passenger (mod_rails/mod_rack) 3.0.19"},
+            cookies={"_session_id": "abc"},
+            body=(
+                '<meta name="csrf-param" content="authenticity_token">'
+                '<meta name="csrf-token" content="abc">'
+                '<script src="/assets/application-0123456789abcdef0123456789abcdef.js"></script>'
+            ),
+            globals_=["_rails_loaded"],
+        )
+
+        detected = BuiltinProvider().detect(fetch)
+        by_name = {finding.name: finding for finding in detected}
+
+        self.assertIn("Ruby on Rails", by_name)
+        self.assertIn("rails csrf param meta", by_name["Ruby on Rails"].evidence)
+        self.assertIn("rails asset pipeline script", by_name["Ruby on Rails"].evidence)
+        self.assertIn("rails rack x-powered-by header", by_name["Ruby on Rails"].evidence)
+
+    def test_phusion_passenger_header_detects_passenger_and_rails(self):
+        detected = BuiltinProvider().detect(
+            make_fetch(headers={"X-Powered-By": "Phusion Passenger (mod_rails/mod_rack) 3.0.19"})
+        )
+        by_name = {finding.name: finding for finding in detected}
+
+        self.assertIn("Phusion Passenger", by_name)
+        self.assertIn("Ruby on Rails", by_name)
+        self.assertIn("passenger x-powered-by header", by_name["Phusion Passenger"].evidence)
+
+    def test_same_host_embedded_url_suffixes_detect_backend_tech(self):
+        fetch = make_fetch(
+            url="https://example.com/home",
+            body=(
+                '<a href="/admin/index.php">admin</a>'
+                '<form action="https://example.com/save.action"></form>'
+                '<script src="/account.jsp"></script>'
+                '<a href="https://other.test/default.aspx">external</a>'
+            ),
+        )
+
+        detected = BuiltinProvider().detect(fetch)
+        by_name = {finding.name: finding for finding in detected}
+
+        self.assertIn("PHP", by_name)
+        self.assertIn("Java Servlet", by_name)
+        self.assertIn("JSP", by_name)
+        self.assertNotIn("ASP.NET", by_name)
+        self.assertIn("same-host embedded php url suffix", by_name["PHP"].evidence)
+
     def test_java_ee_jsf_and_spring_markers(self):
         jsf = make_fetch(
             url="https://example.com/app.xhtml",
