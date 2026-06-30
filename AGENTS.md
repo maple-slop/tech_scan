@@ -50,13 +50,18 @@ Diagnostics:
 
 ## Architecture
 
-- `tech_scan/cli.py`: argparse setup, scan orchestration, provider selection.
-- `tech_scan/fetchers/`: requests fetcher, browser fetcher, redirect policy, headers, auto browser fallback heuristic.
+- `tech_scan/cli.py`: argparse setup, stdin/stdout handling, validation, and process-level browser-session lifecycle.
+- `tech_scan/scanner.py`: scan orchestration for target expansion, cache lookup/write, sanity checks, fetcher execution, auto browser fallback, provider execution, and result assembly.
+- `tech_scan/cli_config.py`: CLI-derived TLS, CA bundle, Chromium, and cache identity helpers.
+- `tech_scan/fetchers/`: requests fetcher, browser fetcher, headers, resource capture, and auto browser fallback heuristic.
 - `tech_scan/cache.py`: SQLite cache for fetched resource observations and links.
-- `tech_scan/providers/`: builtin rules, vendored `wappalyzergo` fingerprints, and optional user-supplied Wappalyzer JSON provider.
+- `tech_scan/providers/`: builtin rules and vendored `wappalyzergo` fingerprints.
+- `tech_scan/providers/wappalyzer_engine.py`: internal Wappalyzer fingerprint engine used by the vendored `wappalyzergo` provider; not a public provider.
 - `tech_scan/output.py`: human and JSONL output formatting.
 - `tech_scan/models.py`: `FetchResult` and `Finding`.
-- `tech_scan/normalize.py`: target normalization and HTTP fallback URL handling.
+- `tech_scan/normalize.py`: target expansion from stdin input into concrete HTTP/HTTPS URL candidates.
+- `tech_scan/html_extract.py`: shared lightweight HTML extraction for scripts, meta tags, and URL-bearing attributes.
+- `tech_scan/url_policy.py`: shared same-host and redirect URL helpers.
 
 ## Fetching And Cache Rules
 
@@ -84,6 +89,8 @@ Redirects must stay on the same hostname. This prevents an app that redirects to
 
 Fresh fetches run a default-on DNS/TCP sanity check before requests or browser mode. Bare domains expand to `http://` and `https://` scans; each concrete URL checks its explicit port when present, otherwise `80` for HTTP or `443` for HTTPS. Cache hits bypass this check. Keep sanity failures uncached.
 
+Fetchers receive one concrete URL and must fetch only that URL. Do not reintroduce protocol fallback inside fetchers; all HTTP/HTTPS expansion belongs before cache, sanity, and fetch in the scanner/normalization layer.
+
 Browser mode uses one shared Playwright Chromium session per scan run. Keep Playwright sync API lifecycle on one thread. Use `CHROMIUM_PATH` when set, otherwise `/usr/bin/chromium` when executable, otherwise Playwright default lookup.
 
 Browser mode loads vendored uBlock Origin Lite by default through a persistent Chromium context. Use `--no-browser-extension` when a raw browser session is needed. Because Chromium extensions require a persistent context, browser mode clears cookies between targets as best-effort isolation rather than creating a separate browser context per target when the extension is enabled.
@@ -106,6 +113,8 @@ Keep builtin rules conservative and evidence-driven. Each finding should include
 - `evidence`
 
 `wappalyzergo` uses vendored `projectdiscovery/wappalyzergo` fingerprint JSON and must not shell out to subprocess wrappers. Keep the vendored upstream license and attribution beside the data. Do not expose user-supplied Wappalyzer JSON as a selectable provider; public provider choices are only `builtin`, `wappalyzergo`, and `all`.
+
+Do not add public imports for internal provider or fetcher helper APIs in package `__init__.py` files. Import implementation helpers from their owning modules, such as `tech_scan.url_policy`, `tech_scan.html_extract`, `tech_scan.fetchers.auto`, or `tech_scan.providers.wappalyzer_engine`.
 
 uBlock Origin Lite is vendored under fetcher data for browser mode. Keep its upstream license and attribution beside the extension files, and include it in package-data checks when packaging behavior changes.
 
@@ -152,8 +161,10 @@ Protect these behaviors with tests when touched:
 - JSONL output stability.
 - Human output includes all JSONL fields.
 - Cache stores observations and is independent of provider set.
+- Scanner orchestration preserves cache, sanity, fetcher, provider, and auto-fallback behavior.
 - Auto mode does not use browser for small static pages.
 - Same-host redirect restriction.
+- Shared HTML extraction and URL policy helpers remain deterministic.
 - Browser session reuse and per-target browser context isolation.
 - Proxy routing and TLS verification options.
 - Browser resource capture and default uBlock Origin Lite loading.
