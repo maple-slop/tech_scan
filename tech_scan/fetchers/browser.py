@@ -7,6 +7,7 @@ import os
 import shutil
 import tempfile
 import threading
+import traceback
 from urllib.parse import urlparse
 
 from tech_scan.models import FetchResult, ResourceObservation
@@ -26,6 +27,11 @@ TEXT_CONTENT_MARKERS = [
     "html",
     "css",
 ]
+
+
+def _format_exception(exc: BaseException, message: str | None = None) -> str:
+    prefix = message if message is not None else str(exc)
+    return f"{prefix}\n{traceback.format_exc()}"
 
 
 def chromium_executable_path() -> str | None:
@@ -85,7 +91,7 @@ def _response_body(response: object, kind: str, headers: dict[str, str]) -> tupl
             raw_bytes = raw_bytes[:MAX_RESOURCE_BODY_BYTES]
         return raw_bytes.decode("utf-8", errors="replace"), None
     except Exception as exc:
-        return "", str(exc)
+        return "", _format_exception(exc)
 
 
 def _resource_from_browser_response(
@@ -145,8 +151,11 @@ class BrowserSession:
             return self._context or self._browser, self._startup_error
         try:
             from playwright.sync_api import sync_playwright
-        except ImportError:
-            self._startup_error = "Playwright is not installed; install tech-scan[browser]"
+        except ImportError as exc:
+            self._startup_error = _format_exception(
+                exc,
+                "Playwright is not installed; install tech-scan[browser]",
+            )
             return None, self._startup_error
 
         launch_args: dict[str, object] = {"headless": True}
@@ -188,7 +197,7 @@ class BrowserSession:
             return self._browser, None
         except Exception as exc:
             self.close()
-            self._startup_error = str(exc)
+            self._startup_error = _format_exception(exc)
             return None, self._startup_error
 
     def fetch(self, target_input: str, url: str, timeout: float) -> FetchResult:
@@ -295,9 +304,12 @@ class BrowserSession:
                     primary_resource_id=document.id,
                 )
             except Exception as exc:
-                error_text = str(exc)
+                error_text = _format_exception(exc)
                 if blocked_redirect.get("url"):
-                    error_text = f"blocked cross-host redirect to {blocked_redirect['url']}"
+                    error_text = _format_exception(
+                        exc,
+                        f"blocked cross-host redirect to {blocked_redirect['url']}",
+                    )
                 return FetchResult(
                     input=target_input,
                     url=url,

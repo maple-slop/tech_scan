@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import traceback
 from urllib.parse import urljoin, urlparse
 
 import requests
@@ -13,6 +14,10 @@ from .headers import BROWSER_HEADERS
 
 MAX_SCRIPT_RESOURCES = 25
 MAX_SCRIPT_BODY_BYTES = 1024 * 1024
+
+
+def _format_exception(exc: BaseException) -> str:
+    return f"{exc}\n{traceback.format_exc()}"
 
 
 def _cookie_dict(cookies: requests.cookies.RequestsCookieJar) -> dict[str, str]:
@@ -185,7 +190,7 @@ def fetch_requests(
                             resource_id,
                             "script",
                             script_url,
-                            str(exc),
+                            _format_exception(exc),
                             parent_id=document.id,
                         )
                     )
@@ -203,7 +208,7 @@ def fetch_requests(
                 primary_resource_id=document.id,
             )
         except requests.RequestException as exc:
-            last_error = str(exc)
+            last_error = _format_exception(exc)
 
     error_resource = _error_resource("document:0", "document", url, last_error or "request failed")
     return FetchResult(
