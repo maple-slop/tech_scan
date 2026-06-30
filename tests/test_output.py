@@ -1,5 +1,6 @@
 import io
 import json
+import threading
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -102,6 +103,45 @@ class OutputTests(unittest.TestCase):
                         self.assertEqual(main(args), 0)
 
             self.assertIn("\n\n", stdout.getvalue())
+
+    def test_main_requests_output_is_eager_completion_order(self):
+        first_can_finish = threading.Event()
+
+        def fake_scan_target(target, args, providers_requested, provider_names, browser_session=None):
+            if target == "a.example":
+                self.assertTrue(first_can_finish.wait(timeout=5))
+            else:
+                first_can_finish.set()
+            return {
+                "input": target,
+                "url": f"https://{target}/",
+                "status": 200,
+                "mode": "requests",
+                "providers": ["builtin"],
+                "cached": False,
+                "technologies": [],
+                "error": None,
+            }
+
+        with TemporaryDirectory() as tmpdir:
+            args = [
+                "--db",
+                str(Path(tmpdir) / "results.db"),
+                "--mode",
+                "requests",
+                "--output",
+                "jsonl",
+                "--concurrency",
+                "2",
+            ]
+            with patch("tech_scan.cli.scan_target", side_effect=fake_scan_target):
+                with patch("sys.stdin", io.StringIO("a.example\nb.example\n")):
+                    stdout = io.StringIO()
+                    with redirect_stdout(stdout):
+                        self.assertEqual(main(args), 0)
+
+        lines = [json.loads(line) for line in stdout.getvalue().splitlines()]
+        self.assertEqual([line["input"] for line in lines], ["b.example", "a.example"])
 
     def test_main_browser_mode_reuses_one_browser_session(self):
         sessions = []

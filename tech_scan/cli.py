@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -212,6 +212,12 @@ def scan_target(
     return result
 
 
+def print_result(result: dict[str, Any], output: str, color: bool) -> None:
+    print(format_result(result, output, color), flush=True)
+    if output == "human":
+        print(flush=True)
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     providers_requested = args.provider or ["builtin"]
@@ -260,9 +266,7 @@ def main(argv: list[str] | None = None) -> int:
                     provider_names,
                     browser_session,
                 )
-                print(format_result(result, args.output, color), flush=True)
-                if args.output == "human":
-                    print(flush=True)
+                print_result(result, args.output, color)
             return 0
 
         with ThreadPoolExecutor(max_workers=args.concurrency) as executor:
@@ -277,10 +281,8 @@ def main(argv: list[str] | None = None) -> int:
                 )
                 for target in targets
             ]
-            for future in futures:
-                print(format_result(future.result(), args.output, color), flush=True)
-                if args.output == "human":
-                    print(flush=True)
+            for future in as_completed(futures):
+                print_result(future.result(), args.output, color)
     finally:
         if browser_session is not None:
             browser_session.close()
