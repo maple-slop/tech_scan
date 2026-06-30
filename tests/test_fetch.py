@@ -814,6 +814,48 @@ class FetchTests(unittest.TestCase):
                 )
                 self.assertIsNotNone(browser_fallback_reason(blocked, findings_count=1))
 
+    def test_auto_retries_cdn_waf_challenge(self):
+        fetch = FetchResult(
+            input="example.com",
+            url="https://example.com",
+            final_url="https://example.com",
+            status=200,
+            headers={"cf-ray": "abc-TPE", "server": "cloudflare"},
+            cookies={},
+            body="<html><title>Just a moment...</title>/cdn-cgi/challenge-platform/</html>",
+            mode="requests",
+        )
+
+        self.assertEqual(browser_fallback_reason(fetch, findings_count=1), "cdn-waf-challenge")
+
+    def test_auto_does_not_retry_normal_cdn_waf_response(self):
+        fetch = FetchResult(
+            input="example.com",
+            url="https://example.com",
+            final_url="https://example.com",
+            status=200,
+            headers={"cf-ray": "abc-TPE", "server": "cloudflare"},
+            cookies={},
+            body="<html><body>Normal useful content with no challenge.</body></html>",
+            mode="requests",
+        )
+
+        self.assertIsNone(browser_fallback_reason(fetch, findings_count=1))
+
+    def test_auto_retries_expanded_cdn_waf_blocking_statuses(self):
+        fetch = FetchResult(
+            input="example.com",
+            url="https://example.com",
+            final_url="https://example.com",
+            status=451,
+            headers={"x-iinfo": "1-123"},
+            cookies={},
+            body="blocked",
+            mode="requests",
+        )
+
+        self.assertEqual(browser_fallback_reason(fetch, findings_count=1), "cdn-waf-blocking-status-451")
+
     def test_auto_retries_explicit_javascript_required_text(self):
         fetch = FetchResult(
             input="example.com",

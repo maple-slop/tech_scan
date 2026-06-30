@@ -74,3 +74,18 @@ def collect_header_observations(
             }
         )
     return observations
+
+
+def browser_fallback_failed_observation(
+    fallback_reason: str,
+    browser_fetch: FetchResult,
+) -> dict[str, str]:
+    error = browser_fetch.error or "no useful browser response"
+    return {
+        "kind": "auto",
+        "name": "browser_fallback_failed",
+        "value": (
+            "requests looked blocked by CDN/WAF "
+            f"(reason={fallback_reason}); browser also failed: {error}"
+        ),
+    }

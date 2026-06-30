@@ -8,12 +8,16 @@ from typing import Any
 from .cache import ResponseCache, cache_disposition
 from .cli_config import fetch_identity, requests_verify
 from .diagnostics import Diagnostics
-from .fetchers.auto import browser_fallback_reason
+from .fetchers.auto import (
+    browser_fallback_reason,
+    has_useful_response,
+    is_cdn_waf_fallback_reason,
+)
 from .fetchers.browser import BrowserSession, fetch_browser
 from .fetchers.requests import fetch_requests
 from .models import FetchResult, ResourceObservation
 from .normalize import expand_targets
-from .observations import collect_header_observations
+from .observations import browser_fallback_failed_observation, collect_header_observations
 from .providers import build_providers, merge_findings
 from .sanity import check_target_ports
 
@@ -65,6 +69,7 @@ class ScanRunner:
     def scan_target(self, raw_target: str, target: str) -> dict[str, Any]:
         findings = []
         fetch: FetchResult | None = None
+        auto_observations: list[dict[str, str]] = []
 
         with ResponseCache(self.args.db) as cache:
             def cached_or_fetch(mode: str) -> FetchResult:
@@ -212,10 +217,24 @@ class ScanRunner:
                     findings = self._detect(fetch, "browser", target)
                 elif fetch is None:
                     fetch = browser_fetch
+                if (
+                    self.args.mode == "auto"
+                    and fallback_reason
+                    and is_cdn_waf_fallback_reason(fallback_reason)
+                    and (browser_fetch.error or not has_useful_response(browser_fetch))
+                ):
+                    auto_observations.append(
+                        browser_fallback_failed_observation(
+                            fallback_reason,
+                            browser_fetch,
+                        )
+                    )
 
         assert fetch is not None
         merged = merge_findings(findings)
         primary = fetch.primary_resource
+        observations = collect_header_observations(fetch, merged)
+        observations.extend(auto_observations)
         return {
             "input": raw_target,
             "url": fetch.url,
@@ -226,7 +245,7 @@ class ScanRunner:
             "cached": fetch.cached,
             "cache_created_at": primary.cache_created_at,
             "cache_updated_at": primary.cache_updated_at,
-            "observations": collect_header_observations(fetch, merged),
+            "observations": observations,
             "technologies": [finding.to_json() for finding in merged],
             "error": fetch.error,
         }

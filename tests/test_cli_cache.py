@@ -346,6 +346,84 @@ class CliCacheTests(unittest.TestCase):
             self.assertIn("auto switching fetcher", stderr.getvalue())
             self.assertIn("reason=blocking-status-403", stderr.getvalue())
 
+    def test_auto_mode_logs_cdn_waf_browser_fallback_reason(self):
+        with TemporaryDirectory() as tmpdir:
+            db = Path(tmpdir) / "results.db"
+            stderr = io.StringIO()
+            args = args_for(db, mode="auto", verbosity=1)
+            args._diagnostics = Diagnostics(verbosity=1, stream=stderr)
+            fetch = FetchResult(
+                input="example.com",
+                url="https://example.com",
+                final_url="https://example.com",
+                status=200,
+                headers={"cf-ray": "abc-TPE", "server": "cloudflare"},
+                cookies={},
+                body="<html><title>Just a moment...</title>/cdn-cgi/challenge-platform/</html>",
+                mode="requests",
+            )
+            browser_fetch = FetchResult(
+                input="example.com",
+                url="https://example.com",
+                final_url="https://example.com",
+                status=200,
+                headers={"server": "example"},
+                cookies={},
+                body="<html><body>Example Domain</body></html>",
+                mode="browser",
+            )
+
+            with patch("tech_scan.scanner.fetch_requests", return_value=fetch):
+                with patch("tech_scan.scanner.fetch_browser", return_value=browser_fetch):
+                    result = scan_target("example.com", args, ["builtin"], ["builtin"])
+
+            self.assertEqual(result["mode"], "browser")
+            self.assertIn("reason=cdn-waf-challenge", stderr.getvalue())
+            self.assertNotIn("browser_fallback_failed", str(result["observations"]))
+
+    def test_auto_mode_warns_when_cdn_waf_fallback_browser_also_fails(self):
+        with TemporaryDirectory() as tmpdir:
+            db = Path(tmpdir) / "results.db"
+            args = args_for(db, mode="auto")
+            fetch = FetchResult(
+                input="example.com",
+                url="https://example.com",
+                final_url="https://example.com",
+                status=451,
+                headers={"x-iinfo": "1-123"},
+                cookies={},
+                body="blocked",
+                mode="requests",
+            )
+            browser_fetch = FetchResult(
+                input="example.com",
+                url="https://example.com",
+                final_url=None,
+                status=None,
+                headers={},
+                cookies={},
+                body="",
+                mode="browser",
+                error="browser failed",
+            )
+
+            with patch("tech_scan.scanner.fetch_requests", return_value=fetch):
+                with patch("tech_scan.scanner.fetch_browser", return_value=browser_fetch):
+                    result = scan_target("example.com", args, ["builtin"], ["builtin"])
+
+        self.assertEqual(result["mode"], "requests")
+        self.assertIn(
+            {
+                "kind": "auto",
+                "name": "browser_fallback_failed",
+                "value": (
+                    "requests looked blocked by CDN/WAF "
+                    "(reason=cdn-waf-blocking-status-451); browser also failed: browser failed"
+                ),
+            },
+            result["observations"],
+        )
+
     def test_top_level_error_traceback_depends_on_verbosity(self):
         def fake_fetch_requests(*args, **kwargs):
             error = "connection failed"
