@@ -7,7 +7,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from tech_scan.cli import main, parse_args
+from tech_scan.cli import main, parse_args, resolve_provider_names
 from tech_scan.output import (
     confidence_color,
     evidence_color,
@@ -117,6 +117,21 @@ class OutputTests(unittest.TestCase):
                     self.assertEqual(main(args), 2)
 
         self.assertIn("does not exist", stderr.getvalue())
+
+    def test_all_provider_names_include_wappalyzergo_by_default(self):
+        self.assertEqual(
+            resolve_provider_names(["all"]),
+            ["builtin", "wappalyzergo"],
+        )
+
+    def test_wappalyzergo_command_flag_is_removed(self):
+        stderr = io.StringIO()
+        with patch("sys.stderr", stderr):
+            with self.assertRaises(SystemExit) as raised:
+                parse_args(["--wappalyzergo-cmd", "unused"])
+
+        self.assertEqual(raised.exception.code, 2)
+        self.assertIn("unrecognized arguments: --wappalyzergo-cmd", stderr.getvalue())
 
     def test_main_human_output_separates_entries_with_blank_line(self):
         with TemporaryDirectory() as tmpdir:

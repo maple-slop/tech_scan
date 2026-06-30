@@ -1,16 +1,20 @@
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 import json
+import subprocess
 
 from tech_scan.models import FetchResult
 from tech_scan.providers import (
     BuiltinProvider,
     WappalyzerGoProvider,
     WappalyzerJsonProvider,
+    build_providers,
     merge_findings,
     parse_wappalyzer_pattern,
 )
+from tech_scan.providers.wappalyzergo import load_vendored_fingerprints
 
 
 def make_fetch(headers=None, cookies=None, body="", globals_=None, url="https://example.com"):
@@ -73,20 +77,46 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(merged[0].provider, "builtin,other")
         self.assertEqual(set(merged[0].evidence), {"server header", "other evidence"})
 
-    def test_wappalyzergo_parser_filters_to_supported_dimensions(self):
-        provider = WappalyzerGoProvider("unused")
+    def test_wappalyzergo_provider_uses_vendored_fingerprints(self):
+        data = load_vendored_fingerprints()
+        provider = WappalyzerGoProvider(data)
 
-        parsed = provider._parse_output(
-            {
-                "technologies": [
-                    {"name": "React", "categories": ["JavaScript frameworks"], "confidence": 100},
-                    {"name": "Stripe", "categories": ["Payment processors"], "confidence": 100},
-                    {"name": "Apache", "categories": ["Web servers"], "confidence": 90},
-                ]
-            }
+        detected = provider.detect(
+            make_fetch(
+                headers={"Server": "cloudflare"},
+                body='<div data-reactroot></div><script src="react.js"></script>',
+            )
         )
+        by_name = {finding.name: finding for finding in detected}
 
-        self.assertEqual(names(parsed), {"React", "Apache"})
+        self.assertIn("Cloudflare", by_name)
+        self.assertIn("React", by_name)
+        self.assertEqual(by_name["Cloudflare"].provider, "wappalyzergo")
+
+    def test_wappalyzergo_provider_has_no_subprocess_dependency(self):
+        with patch.object(subprocess, "run") as run_mock:
+            WappalyzerGoProvider(
+                {
+                    "apps": {
+                        "Apache": {
+                            "cats": [22],
+                            "headers": {"server": "Apache"},
+                        }
+                    }
+                }
+            ).detect(make_fetch(headers={"Server": "Apache"}))
+
+        run_mock.assert_not_called()
+
+    def test_provider_factory_enables_wappalyzergo_without_command(self):
+        providers = build_providers(["wappalyzergo"])
+
+        self.assertEqual([provider.name for provider in providers], ["wappalyzergo"])
+
+    def test_provider_factory_all_includes_wappalyzergo(self):
+        providers = build_providers(["all"])
+
+        self.assertLessEqual({"builtin", "wappalyzergo"}, {provider.name for provider in providers})
 
     def test_wappalyzer_pattern_metadata_parser(self):
         parsed = parse_wappalyzer_pattern(r"react\.js\;confidence:75\;version:\1")

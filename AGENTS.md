@@ -22,6 +22,7 @@ echo 'https://example.com' | uv run -m tech_scan --mode requests --output jsonl
 echo 'https://example.com' | CHROMIUM_PATH=/usr/bin/chromium uv run -m tech_scan --mode browser
 echo 'https://example.com' | uv run -m tech_scan --proxy http://127.0.0.1:8080 --ca-bundle ~/.mitmproxy/mitmproxy-ca-cert.pem
 echo 'https://example.com' | uv run -m tech_scan --proxy socks5h://127.0.0.1:1080 --insecure
+uv run -m tech_scan --provider wappalyzergo < domains.txt
 uv run -m tech_scan --provider wappalyzer_json --wappalyzer-data fingerprints_data.json < domains.txt
 ```
 
@@ -43,7 +44,7 @@ Human output must include all fields present in JSONL.
 - `tech_scan/cli.py`: argparse setup, scan orchestration, provider selection.
 - `tech_scan/fetchers/`: requests fetcher, browser fetcher, redirect policy, headers, auto browser fallback heuristic.
 - `tech_scan/cache.py`: SQLite cache for fetched observations.
-- `tech_scan/providers/`: builtin rules, Python-native Wappalyzer JSON provider, optional external `wappalyzergo` wrapper.
+- `tech_scan/providers/`: builtin rules, vendored `wappalyzergo` fingerprints, and optional user-supplied Wappalyzer JSON provider.
 - `tech_scan/output.py`: human and JSONL output formatting.
 - `tech_scan/models.py`: `FetchResult` and `Finding`.
 - `tech_scan/normalize.py`: target normalization and HTTP fallback URL handling.
@@ -83,7 +84,7 @@ Keep builtin rules conservative and evidence-driven. Each finding should include
 - `confidence`
 - `evidence`
 
-Wappalyzer JSON support is optional and requires `--wappalyzer-data` or `WAPPALYZER_DATA`. Do not vendor large fingerprint datasets unless license and attribution are handled.
+`wappalyzergo` uses vendored `projectdiscovery/wappalyzergo` fingerprint JSON and must not shell out to subprocess wrappers. Keep the vendored upstream license and attribution beside the data. `wappalyzer_json` remains available for explicit user-supplied datasets via `--wappalyzer-data` or `WAPPALYZER_DATA`.
 
 ## Development Commands
 

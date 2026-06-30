@@ -4,6 +4,7 @@ import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from tech_scan.models import (
     DIM_BACKEND,
@@ -119,10 +120,20 @@ def _extract_meta(body: str) -> dict[str, list[str]]:
 class WappalyzerJsonProvider(Provider):
     name = "wappalyzer_json"
 
-    def __init__(self, data_path: Path | str):
-        self.data_path = Path(data_path)
-        with self.data_path.open("r", encoding="utf-8") as fh:
-            data = json.load(fh)
+    def __init__(
+        self,
+        data_path: Path | str | None = None,
+        data: dict[str, Any] | None = None,
+        provider_name: str | None = None,
+    ):
+        if provider_name:
+            self.name = provider_name
+        self.data_path = Path(data_path) if data_path is not None else None
+        if data is None:
+            if self.data_path is None:
+                raise ValueError("data_path or data is required")
+            with self.data_path.open("r", encoding="utf-8") as fh:
+                data = json.load(fh)
         self.apps: dict[str, dict[str, object]] = data.get("apps", data) if isinstance(data, dict) else {}
         self.categories = data.get("categories", {}) if isinstance(data, dict) else {}
 

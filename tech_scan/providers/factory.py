@@ -10,7 +10,6 @@ from .wappalyzergo import WappalyzerGoProvider
 
 def build_providers(
     provider_names: list[str],
-    wappalyzergo_cmd: str | None,
     wappalyzer_data: Path | str | None = None,
 ) -> list[Provider]:
     enabled: list[Provider] = []
@@ -19,6 +18,6 @@ def build_providers(
         enabled.append(BuiltinProvider())
     if "wappalyzer_json" in names and wappalyzer_data:
         enabled.append(WappalyzerJsonProvider(wappalyzer_data))
-    if "wappalyzergo" in names and wappalyzergo_cmd:
-        enabled.append(WappalyzerGoProvider(wappalyzergo_cmd))
+    if "wappalyzergo" in names:
+        enabled.append(WappalyzerGoProvider())
     return enabled

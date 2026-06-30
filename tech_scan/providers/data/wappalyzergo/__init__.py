@@ -1,0 +1,1 @@
+"""Vendored projectdiscovery/wappalyzergo fingerprints."""

@@ -48,7 +48,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         epilog=(
             "Examples: "
             "printf 'example.com\\n' | tech-scan; "
-            "tech-scan --provider all --wappalyzer-data fingerprints_data.json < domains.txt"
+            "tech-scan --provider all < domains.txt"
         ),
     )
     wappalyzer_data_env = os.environ.get("WAPPALYZER_DATA")
@@ -135,16 +135,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help=(
             "Detection provider. Repeatable. builtin is curated local rules; "
-            "wappalyzer_json uses fingerprints_data.json; wappalyzergo uses an external wrapper; "
-            "all enables builtin plus configured optional providers. Default: builtin."
-        ),
-    )
-    parser.add_argument(
-        "--wappalyzergo-cmd",
-        default=os.environ.get("WAPPALYZERGO_CMD"),
-        help=(
-            "Command for an optional stdin/stdout JSON wrapper around projectdiscovery/wappalyzergo. "
-            "Can also be set with WAPPALYZERGO_CMD."
+            "wappalyzergo uses vendored projectdiscovery/wappalyzergo fingerprints; "
+            "wappalyzer_json uses an explicit fingerprints_data.json; "
+            "all enables builtin and wappalyzergo plus configured optional providers. Default: builtin."
         ),
     )
     parser.add_argument(
@@ -161,13 +154,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def resolve_provider_names(
     requested: list[str],
-    wappalyzergo_cmd: str | None,
     wappalyzer_data: Path | str | None = None,
 ) -> list[str]:
     if "all" in requested:
-        names = {"builtin"}
-        if wappalyzergo_cmd:
-            names.add("wappalyzergo")
+        names = {"builtin", "wappalyzergo"}
         if wappalyzer_data:
             names.add("wappalyzer_json")
         return sorted(names)
@@ -196,7 +186,7 @@ def scan_target(
             "error": str(exc),
         }
 
-    providers = build_providers(providers_requested, args.wappalyzergo_cmd, args.wappalyzer_data)
+    providers = build_providers(providers_requested, args.wappalyzer_data)
     findings = []
     fetch: FetchResult | None = None
 
@@ -282,19 +272,8 @@ def main(argv: list[str] | None = None) -> int:
     providers_requested = args.provider or ["builtin"]
     provider_names = resolve_provider_names(
         providers_requested,
-        args.wappalyzergo_cmd,
         args.wappalyzer_data,
     )
-    if (
-        "wappalyzergo" in providers_requested
-        and "all" not in providers_requested
-        and not args.wappalyzergo_cmd
-    ):
-        print(
-            "error: --provider wappalyzergo requires --wappalyzergo-cmd or WAPPALYZERGO_CMD",
-            file=sys.stderr,
-        )
-        return 2
     if (
         "wappalyzer_json" in providers_requested
         and "all" not in providers_requested
