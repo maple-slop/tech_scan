@@ -2,7 +2,7 @@ import io
 import json
 import threading
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
@@ -137,6 +137,14 @@ class OutputTests(unittest.TestCase):
         self.assertTrue(parse_args([]).no_browser_extension is False)
         self.assertTrue(parse_args(["--no-browser-extension"]).no_browser_extension)
 
+    def test_verbosity_flag(self):
+        self.assertEqual(parse_args([]).verbosity, 0)
+        for level in range(4):
+            self.assertEqual(parse_args(["--verbosity", str(level)]).verbosity, level)
+        with redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                parse_args(["--verbosity", "4"])
+
     def test_main_human_output_separates_entries_with_blank_line(self):
         with TemporaryDirectory() as tmpdir:
             db = Path(tmpdir) / "results.db"
@@ -218,11 +226,15 @@ class OutputTests(unittest.TestCase):
                 ignore_https_errors=False,
                 ca_bundle=None,
                 enable_extension=True,
+                diagnostics=None,
+                include_traceback=False,
             ):
                 self.proxy = proxy
                 self.ignore_https_errors = ignore_https_errors
                 self.ca_bundle = ca_bundle
                 self.enable_extension = enable_extension
+                self.diagnostics = diagnostics
+                self.include_traceback = include_traceback
                 self.closed = False
                 sessions.append(self)
 
@@ -261,6 +273,43 @@ class OutputTests(unittest.TestCase):
         self.assertEqual(len(sessions), 1)
         self.assertTrue(sessions[0].closed)
         self.assertEqual(scan_mock.call_count, 2)
+
+    def test_jsonl_output_stays_stdout_and_verbosity_logs_go_to_stderr(self):
+        def fake_scan_target(target, args, providers_requested, provider_names, browser_session=None):
+            args._diagnostics.log(1, f"diagnostic for {target}")
+            return {
+                "input": target,
+                "url": f"https://{target}/",
+                "status": 200,
+                "mode": "requests",
+                "providers": ["builtin"],
+                "cached": False,
+                "technologies": [],
+                "error": None,
+            }
+
+        with TemporaryDirectory() as tmpdir:
+            args = [
+                "--db",
+                str(Path(tmpdir) / "results.db"),
+                "--mode",
+                "requests",
+                "--output",
+                "jsonl",
+                "--verbosity",
+                "1",
+            ]
+            with patch("tech_scan.cli.scan_target", side_effect=fake_scan_target):
+                with patch("sys.stdin", io.StringIO("a.example\n")):
+                    stdout = io.StringIO()
+                    stderr = io.StringIO()
+                    with redirect_stdout(stdout), redirect_stderr(stderr):
+                        self.assertEqual(main(args), 0)
+
+        lines = stdout.getvalue().splitlines()
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(json.loads(lines[0])["input"], "a.example")
+        self.assertIn("diagnostic for a.example", stderr.getvalue())
 
     def test_human_first_line_uses_origin_not_redirected_url(self):
         result = dict(RESULT)

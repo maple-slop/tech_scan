@@ -1,4 +1,5 @@
 import shutil
+import io
 import socket
 import socketserver
 import subprocess
@@ -9,6 +10,7 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
+from tech_scan.diagnostics import Diagnostics
 from tech_scan.fetchers import (
     BrowserSession,
     browser_extension_identity,
@@ -362,9 +364,7 @@ class FetchTests(unittest.TestCase):
 
         self.assertEqual(result.status, 200)
         self.assertEqual(result.resources[1].kind, "script")
-        assert result.resources[1].error is not None
-        self.assertIn("wrong exception", result.resources[1].error)
-        self.assertIn("Traceback (most recent call last):", result.resources[1].error)
+        self.assertEqual(result.resources[1].error, "wrong exception")
 
     def test_requests_primary_fetch_errors_include_traceback(self):
         class ErrorSession(FakeSession):
@@ -378,6 +378,24 @@ class FetchTests(unittest.TestCase):
         self.assertIsNone(result.status)
         assert result.error is not None
         self.assertIn("cannot fetch http://example.com", result.error)
+        self.assertNotIn("Traceback (most recent call last):", result.error)
+
+    def test_requests_primary_fetch_errors_include_traceback_when_requested(self):
+        class ErrorSession(FakeSession):
+            def get(self, url, **kwargs):
+                raise RuntimeError(f"cannot fetch {url}")
+
+        with patch("tech_scan.fetchers.requests.requests.Session", return_value=ErrorSession([])):
+            with patch("tech_scan.fetchers.requests.requests.RequestException", Exception):
+                result = fetch_requests(
+                    "example.com",
+                    "https://example.com",
+                    5,
+                    None,
+                    include_traceback=True,
+                )
+
+        assert result.error is not None
         self.assertIn("Traceback (most recent call last):", result.error)
 
     def test_requests_does_not_fetch_adblock_filtered_scripts(self):
@@ -554,6 +572,29 @@ class FetchTests(unittest.TestCase):
         self.assertEqual(result.status, 302)
         self.assertEqual(result.body, "")
 
+    def test_requests_redirect_trace_uses_diagnostics(self):
+        stderr = io.StringIO()
+        diagnostics = Diagnostics(verbosity=1, stream=stderr)
+        session = FakeSession(
+            [
+                FakeResponse("https://example.com", 302, {"location": "https://example.com/login"}),
+                FakeResponse("https://example.com/login", 302, {"location": "https://idp.example.net/sso"}),
+            ]
+        )
+
+        with patch("tech_scan.fetchers.requests.requests.Session", return_value=session):
+            fetch_requests(
+                "example.com",
+                "https://example.com",
+                5,
+                None,
+                diagnostics=diagnostics,
+            )
+
+        logs = stderr.getvalue()
+        self.assertIn("requests redirect: https://example.com -> https://example.com/login", logs)
+        self.assertIn("requests redirect stopped:", logs)
+
     def test_chromium_path_prefers_environment(self):
         with patch.dict("os.environ", {"CHROMIUM_PATH": "/custom/chromium"}):
             with patch("tech_scan.fetchers.browser.os.access", return_value=True):
@@ -637,11 +678,26 @@ class FetchTests(unittest.TestCase):
         self.assertIn("React.version", by_url["https://example.com/app.js"].body)
         self.assertEqual(by_url["https://example.com/app.css"].body, "body{}")
         self.assertEqual(by_url["https://example.com/logo.png"].body, "")
-        assert by_url["https://example.com/broken.js"].error is not None
-        self.assertIn("body failed", by_url["https://example.com/broken.js"].error)
-        self.assertIn("Traceback (most recent call last):", by_url["https://example.com/broken.js"].error)
+        self.assertEqual(by_url["https://example.com/broken.js"].error, "body failed")
 
     def test_browser_startup_errors_include_traceback(self):
+        class BrokenChromium(FakeChromium):
+            def launch_persistent_context(self, user_data_dir, **kwargs):
+                raise RuntimeError("cannot launch browser")
+
+        playwright = FakePlaywright()
+        playwright.chromium = BrokenChromium()
+        with install_fake_playwright(playwright):
+            session = BrowserSession(proxy=None, include_traceback=True)
+            result = session.fetch("example.com", "https://example.com", 5)
+            session.close()
+
+        self.assertIsNone(result.status)
+        assert result.error is not None
+        self.assertIn("cannot launch browser", result.error)
+        self.assertIn("Traceback (most recent call last):", result.error)
+
+    def test_browser_startup_errors_are_short_by_default(self):
         class BrokenChromium(FakeChromium):
             def launch_persistent_context(self, user_data_dir, **kwargs):
                 raise RuntimeError("cannot launch browser")
@@ -653,10 +709,7 @@ class FetchTests(unittest.TestCase):
             result = session.fetch("example.com", "https://example.com", 5)
             session.close()
 
-        self.assertIsNone(result.status)
-        assert result.error is not None
-        self.assertIn("cannot launch browser", result.error)
-        self.assertIn("Traceback (most recent call last):", result.error)
+        self.assertEqual(result.error, "cannot launch browser")
 
     def test_ubol_package_data_is_available(self):
         self.assertTrue(ubol_extension_path().endswith("tech_scan/fetchers/data/ubol"))

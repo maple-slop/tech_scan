@@ -3,18 +3,20 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
-from .cache import ResponseCache, default_db_path
+from .cache import ResponseCache, default_db_path, is_cacheable_fetch
+from .diagnostics import Diagnostics
 from .fetchers import (
     BrowserSession,
+    browser_fallback_reason,
     browser_extension_identity,
     chromium_executable_path,
     fetch_browser,
     fetch_requests,
-    should_try_browser,
 )
 from .models import FetchResult
 from .normalize import normalize_target
@@ -147,6 +149,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Ignore cached fetch observations and overwrite them with fresh responses.",
     )
     parser.add_argument(
+        "--verbosity",
+        type=int,
+        choices=range(4),
+        default=0,
+        metavar="{0,1,2,3}",
+        help=(
+            "Diagnostic verbosity. 0: short errors only; 1: fetcher switch and redirects; "
+            "2: include tracebacks for live top-level fetch failures; 3: detailed diagnostics. "
+            "Default: 0."
+        ),
+    )
+    parser.add_argument(
         "--output",
         choices=["human", "jsonl"],
         default="human",
@@ -216,19 +230,27 @@ def scan_target(
     providers = build_providers(providers_requested, args.wappalyzer_data)
     findings = []
     fetch: FetchResult | None = None
+    diagnostics = getattr(args, "_diagnostics", None) or Diagnostics(getattr(args, "verbosity", 0))
 
     with ResponseCache(args.db) as cache:
         def cached_or_fetch(mode: str) -> FetchResult:
+            identity = fetch_identity(args, mode)
             if not args.refresh:
                 cached_fetch = cache.get(
                     target,
                     mode,
                     args.proxy,
                     args.cache_ttl,
-                    fetch_identity(args, mode),
+                    identity,
                 )
                 if cached_fetch:
+                    diagnostics.log(3, f"cache hit: target={target} mode={mode}")
                     return cached_fetch
+                diagnostics.log(3, f"cache miss: target={target} mode={mode}")
+            else:
+                diagnostics.log(3, f"cache bypass refresh: target={target} mode={mode}")
+            started = time.perf_counter()
+            diagnostics.log(3, f"fetch start: target={target} mode={mode}")
             if mode == "browser":
                 fresh_fetch = fetch_browser(
                     raw_target,
@@ -239,6 +261,8 @@ def scan_target(
                     args.insecure,
                     str(args.ca_bundle.expanduser().resolve()) if args.ca_bundle else None,
                     not getattr(args, "no_browser_extension", False),
+                    diagnostics=diagnostics,
+                    include_traceback=diagnostics.enabled(2),
                 )
             else:
                 fresh_fetch = fetch_requests(
@@ -247,30 +271,59 @@ def scan_target(
                     args.timeout,
                     args.proxy,
                     requests_verify(args.ca_bundle, args.insecure),
+                    diagnostics=diagnostics,
+                    include_traceback=diagnostics.enabled(2),
                 )
-            cache.set(
-                target,
-                mode,
-                args.proxy,
-                fresh_fetch,
-                fetch_identity(args, mode),
+            elapsed = time.perf_counter() - started
+            diagnostics.log(
+                3,
+                f"fetch end: target={target} mode={mode} status={fresh_fetch.status} "
+                f"error={bool(fresh_fetch.error)} elapsed={elapsed:.3f}s",
             )
+            if is_cacheable_fetch(fresh_fetch):
+                cache.set(target, mode, args.proxy, fresh_fetch, identity)
+                diagnostics.log(3, f"cache write: target={target} mode={mode}")
+            else:
+                diagnostics.log(3, f"cache drop: target={target} mode={mode} reason=fetch-error")
             return fresh_fetch
 
         if args.mode in {"requests", "auto"}:
             fetch = cached_or_fetch("requests")
+            provider_started = time.perf_counter()
             for provider in providers:
                 findings.extend(provider.detect(fetch))
+            diagnostics.log(
+                3,
+                f"providers complete: target={target} mode=requests "
+                f"providers={len(providers)} findings={len(findings)} "
+                f"elapsed={time.perf_counter() - provider_started:.3f}s",
+            )
 
-        if args.mode == "browser" or (
-            args.mode == "auto" and fetch is not None and should_try_browser(fetch, len(findings))
-        ):
+        fallback_reason = (
+            browser_fallback_reason(fetch, len(findings))
+            if args.mode == "auto" and fetch is not None
+            else None
+        )
+        if args.mode == "browser" or (args.mode == "auto" and fallback_reason):
+            if fallback_reason:
+                diagnostics.log(
+                    1,
+                    f"auto switching fetcher: target={target} from=requests to=browser "
+                    f"reason={fallback_reason}",
+                )
             browser_fetch = cached_or_fetch("browser")
             if not browser_fetch.error:
                 fetch = browser_fetch
                 findings = []
+                provider_started = time.perf_counter()
                 for provider in providers:
                     findings.extend(provider.detect(fetch))
+                diagnostics.log(
+                    3,
+                    f"providers complete: target={target} mode=browser "
+                    f"providers={len(providers)} findings={len(findings)} "
+                    f"elapsed={time.perf_counter() - provider_started:.3f}s",
+                )
             elif fetch is None:
                 fetch = browser_fetch
 
@@ -297,6 +350,7 @@ def print_result(result: dict[str, Any], output: str, color: bool) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
+    args._diagnostics = Diagnostics(args.verbosity)
     providers_requested = args.provider or ["builtin"]
     provider_names = resolve_provider_names(
         providers_requested,
@@ -334,6 +388,8 @@ def main(argv: list[str] | None = None) -> int:
             ignore_https_errors=args.insecure,
             ca_bundle=str(args.ca_bundle.resolve()) if args.ca_bundle else None,
             enable_extension=not getattr(args, "no_browser_extension", False),
+            diagnostics=args._diagnostics,
+            include_traceback=args.verbosity >= 2,
         )
         if args.mode in {"browser", "auto"}
         else None

@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import re
-import traceback
 from urllib.parse import urljoin, urlparse
 
 import requests
 
+from tech_scan.diagnostics import Diagnostics, exception_with_traceback, short_exception
 from tech_scan.models import FetchResult, ResourceObservation
 from tech_scan.normalize import http_fallback_url
 
@@ -14,10 +14,6 @@ from .headers import BROWSER_HEADERS
 
 MAX_SCRIPT_RESOURCES = 25
 MAX_SCRIPT_BODY_BYTES = 1024 * 1024
-
-
-def _format_exception(exc: BaseException) -> str:
-    return f"{exc}\n{traceback.format_exc()}"
 
 
 def _cookie_dict(cookies: requests.cookies.RequestsCookieJar) -> dict[str, str]:
@@ -66,6 +62,7 @@ def _get_with_same_host_redirects(
     timeout: float,
     proxies: dict[str, str] | None,
     request_kwargs: dict[str, object],
+    diagnostics: Diagnostics | None = None,
 ) -> requests.Response:
     current_url = url
     response = None
@@ -82,7 +79,15 @@ def _get_with_same_host_redirects(
         if not is_redirect_status(response.status_code) or not next_url:
             break
         if not same_hostname(url, next_url):
+            if diagnostics:
+                diagnostics.log(
+                    1,
+                    f"requests redirect stopped: {current_url} -> {next_url} "
+                    f"(cross-host)",
+                )
             break
+        if diagnostics:
+            diagnostics.log(1, f"requests redirect: {current_url} -> {next_url}")
         current_url = next_url
     if response is None:
         raise requests.RequestException("request failed")
@@ -137,6 +142,8 @@ def fetch_requests(
     timeout: float,
     proxy: str | None,
     verify: bool | str | None = None,
+    diagnostics: Diagnostics | None = None,
+    include_traceback: bool = False,
 ) -> FetchResult:
     proxies = {"http": proxy, "https": proxy} if proxy else None
     session = requests.Session()
@@ -149,14 +156,23 @@ def fetch_requests(
         if not candidate:
             continue
         try:
+            if diagnostics:
+                diagnostics.log(3, f"requests fetch start: {candidate}")
             response = _get_with_same_host_redirects(
                 session,
                 candidate,
                 timeout,
                 proxies,
                 request_kwargs,
+                diagnostics,
             )
             document = _resource_from_response("document:0", "document", candidate, response)
+            if diagnostics:
+                diagnostics.log(
+                    3,
+                    f"requests fetch end: {candidate} status={document.status} "
+                    f"final_url={document.final_url}",
+                )
             body = document.body
             script_srcs = extract_script_srcs(body)
             resources = [document]
@@ -164,15 +180,20 @@ def fetch_requests(
             for index, src in enumerate(script_srcs[:MAX_SCRIPT_RESOURCES]):
                 script_url = urljoin(base_url, src)
                 if is_blocked_script_url(script_url):
+                    if diagnostics:
+                        diagnostics.log(3, f"requests script skipped by adblock: {script_url}")
                     continue
                 resource_id = f"script:{index}"
                 try:
+                    if diagnostics:
+                        diagnostics.log(3, f"requests script fetch start: {script_url}")
                     script_response = _get_with_same_host_redirects(
                         session,
                         script_url,
                         timeout,
                         proxies,
                         request_kwargs,
+                        diagnostics,
                     )
                     resources.append(
                         _resource_from_response(
@@ -184,13 +205,17 @@ def fetch_requests(
                             max_body_bytes=MAX_SCRIPT_BODY_BYTES,
                         )
                     )
+                    if diagnostics:
+                        diagnostics.log(3, f"requests script fetch end: {script_url}")
                 except requests.RequestException as exc:
+                    if diagnostics:
+                        diagnostics.exception(2, f"requests script fetch failed: {script_url}", exc)
                     resources.append(
                         _error_resource(
                             resource_id,
                             "script",
                             script_url,
-                            _format_exception(exc),
+                            short_exception(exc),
                             parent_id=document.id,
                         )
                     )
@@ -208,7 +233,11 @@ def fetch_requests(
                 primary_resource_id=document.id,
             )
         except requests.RequestException as exc:
-            last_error = _format_exception(exc)
+            if diagnostics:
+                diagnostics.exception(2, f"requests fetch failed: {candidate}", exc)
+            last_error = (
+                exception_with_traceback(exc) if include_traceback else short_exception(exc)
+            )
 
     error_resource = _error_resource("document:0", "document", url, last_error or "request failed")
     return FetchResult(

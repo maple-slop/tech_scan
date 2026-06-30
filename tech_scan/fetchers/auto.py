@@ -50,13 +50,19 @@ def has_useful_response(fetch: FetchResult) -> bool:
 
 
 def should_try_browser(fetch: FetchResult, findings_count: int) -> bool:
+    return browser_fallback_reason(fetch, findings_count) is not None
+
+
+def browser_fallback_reason(fetch: FetchResult, findings_count: int) -> str | None:
     if fetch.error:
-        return True
+        return "request-error"
     if fetch.status in {401, 403, 429, 503}:
-        return True
+        return f"blocking-status-{fetch.status}"
     if not has_useful_response(fetch):
-        return True
+        return "empty-response"
     body = fetch.body.strip()
     if looks_js_required(body):
-        return True
-    return findings_count == 0 and looks_spa_shell(body, fetch.script_srcs)
+        return "javascript-required"
+    if findings_count == 0 and looks_spa_shell(body, fetch.script_srcs):
+        return "spa-shell-without-findings"
+    return None

@@ -1,4 +1,5 @@
 from .auto import (
+    browser_fallback_reason,
     has_useful_response,
     looks_js_required,
     looks_spa_shell,
@@ -23,6 +24,7 @@ from .requests import (
 __all__ = [
     "BROWSER_HEADERS",
     "BrowserSession",
+    "browser_fallback_reason",
     "browser_extension_identity",
     "chromium_executable_path",
     "extract_script_srcs",

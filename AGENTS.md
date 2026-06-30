@@ -20,6 +20,7 @@ Common commands:
 echo 'https://example.com' | uv run -m tech_scan
 echo 'https://example.com' | uv run -m tech_scan --mode requests --output jsonl
 echo 'https://example.com' | CHROMIUM_PATH=/usr/bin/chromium uv run -m tech_scan --mode browser
+echo 'https://example.com' | uv run -m tech_scan --mode auto --verbosity 1
 echo 'https://example.com' | uv run -m tech_scan --proxy http://127.0.0.1:8080 --ca-bundle ~/.mitmproxy/mitmproxy-ca-cert.pem
 echo 'https://example.com' | uv run -m tech_scan --proxy socks5h://127.0.0.1:1080 --insecure
 uv run -m tech_scan --provider wappalyzergo < domains.txt
@@ -38,6 +39,14 @@ Output modes:
 - `jsonl`: one stable JSON object per input line.
 
 Human output must include all fields present in JSONL.
+
+Diagnostics:
+
+- `--verbosity 0`: default, short error messages only.
+- `--verbosity 1`: adds fetcher-switch reasons and redirect traces on stderr.
+- `--verbosity 2`: includes stack traces for live top-level fetch failures and stderr exception diagnostics.
+- `--verbosity 3`: adds detailed cache, fetch, browser, resource, provider, and timing logs on stderr.
+- Keep verbose diagnostics on stderr so JSONL stdout remains one machine-readable object per input line.
 
 ## Architecture
 

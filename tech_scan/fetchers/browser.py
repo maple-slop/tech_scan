@@ -7,9 +7,9 @@ import os
 import shutil
 import tempfile
 import threading
-import traceback
 from urllib.parse import urlparse
 
+from tech_scan.diagnostics import Diagnostics, exception_with_traceback, short_exception
 from tech_scan.models import FetchResult, ResourceObservation
 
 from .headers import BROWSER_HEADERS
@@ -27,11 +27,6 @@ TEXT_CONTENT_MARKERS = [
     "html",
     "css",
 ]
-
-
-def _format_exception(exc: BaseException, message: str | None = None) -> str:
-    prefix = message if message is not None else str(exc)
-    return f"{prefix}\n{traceback.format_exc()}"
 
 
 def chromium_executable_path() -> str | None:
@@ -78,7 +73,12 @@ def _is_text_resource(kind: str, headers: dict[str, str]) -> bool:
     return kind in TEXT_RESOURCE_TYPES or any(marker in content_type for marker in TEXT_CONTENT_MARKERS)
 
 
-def _response_body(response: object, kind: str, headers: dict[str, str]) -> tuple[str, str | None]:
+def _response_body(
+    response: object,
+    kind: str,
+    headers: dict[str, str],
+    diagnostics: Diagnostics | None = None,
+) -> tuple[str, str | None]:
     if not _is_text_resource(kind, headers):
         return "", None
     try:
@@ -91,20 +91,23 @@ def _response_body(response: object, kind: str, headers: dict[str, str]) -> tupl
             raw_bytes = raw_bytes[:MAX_RESOURCE_BODY_BYTES]
         return raw_bytes.decode("utf-8", errors="replace"), None
     except Exception as exc:
-        return "", _format_exception(exc)
+        if diagnostics:
+            diagnostics.exception(2, f"browser resource body failed: {str(_value(response, 'url', ''))}", exc)
+        return "", short_exception(exc)
 
 
 def _resource_from_browser_response(
     resource_id: str,
     response: object,
     parent_id: str | None,
+    diagnostics: Diagnostics | None = None,
 ) -> ResourceObservation | None:
     url = str(_value(response, "url", ""))
     if not _is_http_url(url):
         return None
     kind = _resource_type(response)
     headers = _headers(response)
-    body, error = _response_body(response, kind, headers)
+    body, error = _response_body(response, kind, headers, diagnostics)
     status = _value(response, "status", None)
     return ResourceObservation(
         id=resource_id,
@@ -133,11 +136,15 @@ class BrowserSession:
         ignore_https_errors: bool = False,
         ca_bundle: str | None = None,
         enable_extension: bool = True,
+        diagnostics: Diagnostics | None = None,
+        include_traceback: bool = False,
     ):
         self.proxy = proxy
         self.ignore_https_errors = ignore_https_errors
         self.ca_bundle = ca_bundle
         self.enable_extension = enable_extension
+        self.diagnostics = diagnostics
+        self.include_traceback = include_traceback
         self._playwright = None
         self._browser = None
         self._context = None
@@ -152,9 +159,15 @@ class BrowserSession:
         try:
             from playwright.sync_api import sync_playwright
         except ImportError as exc:
-            self._startup_error = _format_exception(
-                exc,
-                "Playwright is not installed; install tech-scan[browser]",
+            if self.diagnostics:
+                self.diagnostics.exception(2, "playwright import failed", exc)
+            self._startup_error = (
+                exception_with_traceback(
+                    exc,
+                    "Playwright is not installed; install tech-scan[browser]",
+                )
+                if self.include_traceback
+                else "Playwright is not installed; install tech-scan[browser]"
             )
             return None, self._startup_error
 
@@ -162,8 +175,14 @@ class BrowserSession:
         executable_path = chromium_executable_path()
         if executable_path:
             launch_args["executable_path"] = executable_path
+            if self.diagnostics:
+                self.diagnostics.log(3, f"browser launch executable_path={executable_path}")
         elif self.enable_extension:
             launch_args["channel"] = "chromium"
+            if self.diagnostics:
+                self.diagnostics.log(3, "browser launch channel=chromium")
+        elif self.diagnostics:
+            self.diagnostics.log(3, "browser launch using Playwright default browser")
         if self.proxy:
             launch_args["proxy"] = {"server": self.proxy}
         if self.ca_bundle:
@@ -176,6 +195,11 @@ class BrowserSession:
             launch_args["ignore_https_errors"] = True
 
         try:
+            if self.diagnostics:
+                self.diagnostics.log(
+                    3,
+                    f"browser launch start: extension={self.enable_extension} proxy={self.proxy}",
+                )
             self._playwright = sync_playwright().start()
             if self.enable_extension:
                 extension_path = self._resources.enter_context(
@@ -192,12 +216,20 @@ class BrowserSession:
                     extra_http_headers=BROWSER_HEADERS,
                     **launch_args,
                 )
+                if self.diagnostics:
+                    self.diagnostics.log(3, "browser persistent context ready")
                 return self._context, None
             self._browser = self._playwright.chromium.launch(**launch_args)
+            if self.diagnostics:
+                self.diagnostics.log(3, "browser launch ready")
             return self._browser, None
         except Exception as exc:
             self.close()
-            self._startup_error = _format_exception(exc)
+            if self.diagnostics:
+                self.diagnostics.exception(2, "browser launch failed", exc)
+            self._startup_error = (
+                exception_with_traceback(exc) if self.include_traceback else short_exception(exc)
+            )
             return None, self._startup_error
 
     def fetch(self, target_input: str, url: str, timeout: float) -> FetchResult:
@@ -220,6 +252,8 @@ class BrowserSession:
             context = None
             page = None
             try:
+                if self.diagnostics:
+                    self.diagnostics.log(3, f"browser fetch start: {url}")
                 if self.enable_extension:
                     context = browser_or_context
                     if hasattr(context, "clear_cookies"):
@@ -243,6 +277,12 @@ class BrowserSession:
                         and not same_hostname(url, request_url)
                     ):
                         blocked_redirect["url"] = request_url
+                        if self.diagnostics:
+                            self.diagnostics.log(
+                                1,
+                                f"browser redirect blocked: {url} -> {request_url} "
+                                f"(cross-host)",
+                            )
                         route.abort("blockedbyclient")
                         return
                     route.continue_()
@@ -289,9 +329,22 @@ class BrowserSession:
                         _resource_id(observed_kind, counters),
                         observed,
                         document.id,
+                        self.diagnostics,
                     )
                     if resource is not None:
                         resources_list.append(resource)
+                        if self.diagnostics:
+                            self.diagnostics.log(
+                                3,
+                                f"browser resource observed: kind={resource.kind} "
+                                f"status={resource.status} url={resource.url}",
+                            )
+                if self.diagnostics:
+                    self.diagnostics.log(
+                        3,
+                        f"browser fetch end: {url} status={document.status} "
+                        f"final_url={document.final_url} resources={len(resources_list)}",
+                    )
                 return FetchResult(
                     input=target_input,
                     url=document.url,
@@ -307,11 +360,17 @@ class BrowserSession:
                     primary_resource_id=document.id,
                 )
             except Exception as exc:
-                error_text = _format_exception(exc)
+                if self.diagnostics:
+                    self.diagnostics.exception(2, f"browser fetch failed: {url}", exc)
+                error_text = (
+                    exception_with_traceback(exc) if self.include_traceback else short_exception(exc)
+                )
                 if blocked_redirect.get("url"):
-                    error_text = _format_exception(
-                        exc,
-                        f"blocked cross-host redirect to {blocked_redirect['url']}",
+                    message = f"blocked cross-host redirect to {blocked_redirect['url']}"
+                    error_text = (
+                        exception_with_traceback(exc, message)
+                        if self.include_traceback
+                        else message
                     )
                 return FetchResult(
                     input=target_input,
@@ -361,8 +420,17 @@ def fetch_browser(
     ignore_https_errors: bool = False,
     ca_bundle: str | None = None,
     enable_extension: bool = True,
+    diagnostics: Diagnostics | None = None,
+    include_traceback: bool = False,
 ) -> FetchResult:
     if browser_session is not None:
         return browser_session.fetch(target_input, url, timeout)
-    with BrowserSession(proxy, ignore_https_errors, ca_bundle, enable_extension) as session:
+    with BrowserSession(
+        proxy,
+        ignore_https_errors,
+        ca_bundle,
+        enable_extension,
+        diagnostics,
+        include_traceback,
+    ) as session:
         return session.fetch(target_input, url, timeout)
