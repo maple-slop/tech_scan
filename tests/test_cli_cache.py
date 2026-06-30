@@ -112,6 +112,43 @@ class CliCacheTests(unittest.TestCase):
             self.assertEqual(result["mode"], "requests")
             browser_mock.assert_not_called()
 
+    def test_browser_cache_identity_includes_chromium_path_env(self):
+        with TemporaryDirectory() as tmpdir:
+            db = Path(tmpdir) / "results.db"
+            first_fetch = FetchResult(
+                input="example.com",
+                url="https://example.com",
+                final_url="https://example.com",
+                status=None,
+                headers={},
+                cookies={},
+                body="",
+                mode="browser",
+                error="old browser missing",
+            )
+            second_fetch = FetchResult(
+                input="example.com",
+                url="https://example.com",
+                final_url="https://example.com",
+                status=200,
+                headers={"server": "example"},
+                cookies={},
+                body="<html><body>Example Domain</body></html>",
+                mode="browser",
+            )
+            args = args_for(db, mode="browser")
+
+            with patch("tech_scan.cli.fetch_browser", side_effect=[first_fetch, second_fetch]) as fetch_mock:
+                with patch.dict("os.environ", {"CHROMIUM_PATH": "/old/chrome"}):
+                    first = scan_target("example.com", args, ["builtin"], ["builtin"])
+                with patch.dict("os.environ", {"CHROMIUM_PATH": "/new/chrome"}):
+                    second = scan_target("example.com", args, ["builtin"], ["builtin"])
+
+            self.assertFalse(first["cached"])
+            self.assertFalse(second["cached"])
+            self.assertEqual(fetch_mock.call_count, 2)
+            self.assertEqual(second["status"], 200)
+
 
 if __name__ == "__main__":
     unittest.main()

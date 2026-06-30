@@ -11,6 +11,7 @@ from .cache import ResponseCache, default_db_path
 from .fetchers import (
     BrowserSession,
     browser_extension_identity,
+    chromium_executable_path,
     fetch_browser,
     fetch_requests,
     should_try_browser,
@@ -45,10 +46,18 @@ def requests_verify(ca_bundle: Path | None, insecure: bool) -> bool | str | None
     return None
 
 
+def chromium_identity() -> str:
+    executable_path = chromium_executable_path()
+    if executable_path:
+        return f"chromium:{Path(executable_path).expanduser().resolve()}"
+    return "chromium:playwright-default"
+
+
 def fetch_identity(args: argparse.Namespace, mode: str) -> str:
     parts = [tls_identity(args.ca_bundle, args.insecure)]
     if mode == "browser":
         parts.append(browser_extension_identity(not getattr(args, "no_browser_extension", False)))
+        parts.append(chromium_identity())
     return "|".join(parts)
 
 
