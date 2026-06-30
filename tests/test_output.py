@@ -6,12 +6,12 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from tech_scan.cli import (
+from tech_scan.cli import main
+from tech_scan.output import (
     confidence_color,
     evidence_color,
     format_human,
     format_jsonl,
-    main,
     origin_display_url,
 )
 

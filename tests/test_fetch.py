@@ -3,7 +3,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 import sys
 
-from tech_scan.fetch import (
+from tech_scan.fetchers import (
     BrowserSession,
     chromium_executable_path,
     fetch_requests,
@@ -157,7 +157,7 @@ class FetchTests(unittest.TestCase):
             ]
         )
 
-        with patch("tech_scan.fetch.requests.Session", return_value=session):
+        with patch("tech_scan.fetchers.requests.requests.Session", return_value=session):
             result = fetch_requests("example.com", "https://example.com", 5, None)
 
         self.assertEqual(session.urls, ["https://example.com", "https://example.com/login"])
@@ -176,7 +176,7 @@ class FetchTests(unittest.TestCase):
             ]
         )
 
-        with patch("tech_scan.fetch.requests.Session", return_value=session):
+        with patch("tech_scan.fetchers.requests.requests.Session", return_value=session):
             result = fetch_requests("example.com", "https://example.com", 5, None)
 
         self.assertEqual(session.urls, ["https://example.com"])
@@ -186,17 +186,17 @@ class FetchTests(unittest.TestCase):
 
     def test_chromium_path_prefers_environment(self):
         with patch.dict("os.environ", {"CHROMIUM_PATH": "/custom/chromium"}):
-            with patch("tech_scan.fetch.os.access", return_value=True):
+            with patch("tech_scan.fetchers.browser.os.access", return_value=True):
                 self.assertEqual(chromium_executable_path(), "/custom/chromium")
 
     def test_chromium_path_uses_system_chromium(self):
         with patch.dict("os.environ", {}, clear=True):
-            with patch("tech_scan.fetch.os.access", return_value=True):
+            with patch("tech_scan.fetchers.browser.os.access", return_value=True):
                 self.assertEqual(chromium_executable_path(), "/usr/bin/chromium")
 
     def test_chromium_path_falls_back_to_playwright_default(self):
         with patch.dict("os.environ", {}, clear=True):
-            with patch("tech_scan.fetch.os.access", return_value=False):
+            with patch("tech_scan.fetchers.browser.os.access", return_value=False):
                 self.assertIsNone(chromium_executable_path())
 
     def test_browser_session_reuses_one_browser_with_separate_contexts(self):

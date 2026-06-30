@@ -38,10 +38,11 @@ Human output must include all fields present in JSONL.
 
 ## Architecture
 
-- `tech_scan/cli.py`: argparse setup, scan orchestration, provider selection, output formatting.
-- `tech_scan/fetch.py`: requests fetcher, browser fetcher, redirect policy, auto browser fallback heuristic.
+- `tech_scan/cli.py`: argparse setup, scan orchestration, provider selection.
+- `tech_scan/fetchers/`: requests fetcher, browser fetcher, redirect policy, headers, auto browser fallback heuristic.
 - `tech_scan/cache.py`: SQLite cache for fetched observations.
-- `tech_scan/providers.py`: builtin rules, Python-native Wappalyzer JSON provider, optional external `wappalyzergo` wrapper.
+- `tech_scan/providers/`: builtin rules, Python-native Wappalyzer JSON provider, optional external `wappalyzergo` wrapper.
+- `tech_scan/output.py`: human and JSONL output formatting.
 - `tech_scan/models.py`: `FetchResult` and `Finding`.
 - `tech_scan/normalize.py`: target normalization and HTTP fallback URL handling.
 
