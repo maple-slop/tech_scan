@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import re
+import warnings
 from urllib.parse import urljoin, urlparse
 
 import requests
+from urllib3.exceptions import InsecureRequestWarning
 
 from tech_scan.diagnostics import Diagnostics, exception_with_traceback, short_exception
 from tech_scan.models import FetchResult, ResourceObservation
@@ -66,14 +68,26 @@ def _get_with_same_host_redirects(
     current_url = url
     response = None
     for _ in range(10):
-        response = session.get(
-            current_url,
-            headers=BROWSER_HEADERS,
-            timeout=timeout,
-            proxies=proxies,
-            allow_redirects=False,
-            **request_kwargs,
-        )
+        if request_kwargs.get("verify") is False:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", InsecureRequestWarning)
+                response = session.get(
+                    current_url,
+                    headers=BROWSER_HEADERS,
+                    timeout=timeout,
+                    proxies=proxies,
+                    allow_redirects=False,
+                    **request_kwargs,
+                )
+        else:
+            response = session.get(
+                current_url,
+                headers=BROWSER_HEADERS,
+                timeout=timeout,
+                proxies=proxies,
+                allow_redirects=False,
+                **request_kwargs,
+            )
         next_url = redirect_target(current_url, response.headers.get("location"))
         if not is_redirect_status(response.status_code) or not next_url:
             break

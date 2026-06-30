@@ -7,8 +7,11 @@ import sys
 import threading
 import time
 import unittest
+import warnings
 from types import SimpleNamespace
 from unittest.mock import patch
+
+from urllib3.exceptions import InsecureRequestWarning
 
 from tech_scan.diagnostics import Diagnostics
 from tech_scan.fetchers import (
@@ -290,6 +293,24 @@ class FetchTests(unittest.TestCase):
             {"http": "http://proxy:8080", "https": "http://proxy:8080"},
         )
         self.assertIs(session.kwargs[0]["verify"], False)
+
+    def test_requests_insecure_suppresses_urllib3_warning(self):
+        class WarningSession(FakeSession):
+            def get(self, url, **kwargs):
+                warnings.warn("unverified request", InsecureRequestWarning)
+                return super().get(url, **kwargs)
+
+        session = WarningSession([FakeResponse("https://example.com", 200, {}, "ok")])
+
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            with patch("tech_scan.fetchers.requests.requests.Session", return_value=session):
+                fetch_requests("example.com", "https://example.com", 5, None, False)
+
+        self.assertEqual(
+            [warning for warning in caught if issubclass(warning.category, InsecureRequestWarning)],
+            [],
+        )
 
     def test_requests_fetches_visible_script_subresources(self):
         session = FakeSession(
