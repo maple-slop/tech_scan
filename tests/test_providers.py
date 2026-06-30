@@ -121,7 +121,7 @@ class ProviderTests(unittest.TestCase):
 
         self.assertEqual(len(merged), 1)
         self.assertEqual(merged[0].provider, "builtin,other")
-        self.assertEqual(set(merged[0].evidence), {"server header", "other evidence"})
+        self.assertEqual(set(merged[0].evidence), {"Server: nginx", "other evidence"})
 
     def test_wappalyzergo_provider_uses_vendored_fingerprints(self):
         data = load_vendored_fingerprints()
@@ -214,6 +214,9 @@ class ProviderTests(unittest.TestCase):
         self.assertIn("ASP.NET", detected_names)
         self.assertIn("Microsoft IIS", detected_names)
         self.assertNotIn("ASP.NET Core", detected_names)
+        by_name = {finding.name: finding for finding in detected}
+        self.assertIn("Server: Microsoft-IIS/10.0", by_name["Microsoft IIS"].evidence)
+        self.assertIn("X-Powered-By: ASP.NET", by_name["ASP.NET"].evidence)
 
     def test_aspnet_core_detects_kestrel_and_core_cookie(self):
         detected = BuiltinProvider().detect(
@@ -225,8 +228,8 @@ class ProviderTests(unittest.TestCase):
         by_name = {finding.name: finding for finding in detected}
 
         self.assertIn("ASP.NET Core", by_name)
-        self.assertIn("kestrel server header", by_name["ASP.NET Core"].evidence)
-        self.assertIn("asp.net core cookie", by_name["ASP.NET Core"].evidence)
+        self.assertIn("Server: Kestrel", by_name["ASP.NET Core"].evidence)
+        self.assertIn("cookie: .AspNetCore.Session", by_name["ASP.NET Core"].evidence)
 
     def test_laravel_cookie_and_csrf_markers(self):
         fetch = make_fetch(
@@ -244,6 +247,10 @@ class ProviderTests(unittest.TestCase):
         self.assertIn("PHP", by_name)
         self.assertIn("Laravel", by_name)
         self.assertIn("laravel encrypted cookie", by_name["Laravel"].evidence)
+        self.assertNotIn(
+            "eyJpdiI6ImFhYSIsInZhbHVlIjoiYmJiIn0=",
+            "\n".join(by_name["Laravel"].evidence),
+        )
 
     def test_generic_csrf_token_meta_does_not_identify_laravel_or_rails(self):
         detected = BuiltinProvider().detect(
@@ -272,7 +279,12 @@ class ProviderTests(unittest.TestCase):
         self.assertIn("Ruby on Rails", by_name)
         self.assertIn("rails csrf param meta", by_name["Ruby on Rails"].evidence)
         self.assertIn("rails asset pipeline script", by_name["Ruby on Rails"].evidence)
-        self.assertIn("rails rack x-powered-by header", by_name["Ruby on Rails"].evidence)
+        self.assertIn(
+            "X-Powered-By: Phusion Passenger (mod_rails/mod_rack) 3.0.19",
+            by_name["Ruby on Rails"].evidence,
+        )
+        self.assertIn("cookie: _session_id", by_name["Ruby on Rails"].evidence)
+        self.assertIn("window global: _rails_loaded", by_name["Ruby on Rails"].evidence)
 
     def test_phusion_passenger_header_detects_passenger_and_rails(self):
         detected = BuiltinProvider().detect(
@@ -282,7 +294,10 @@ class ProviderTests(unittest.TestCase):
 
         self.assertIn("Phusion Passenger", by_name)
         self.assertIn("Ruby on Rails", by_name)
-        self.assertIn("passenger x-powered-by header", by_name["Phusion Passenger"].evidence)
+        self.assertIn(
+            "X-Powered-By: Phusion Passenger (mod_rails/mod_rack) 3.0.19",
+            by_name["Phusion Passenger"].evidence,
+        )
 
     def test_same_host_embedded_url_suffixes_detect_backend_tech(self):
         fetch = make_fetch(
@@ -302,7 +317,7 @@ class ProviderTests(unittest.TestCase):
         self.assertIn("Java Servlet", by_name)
         self.assertIn("JSP", by_name)
         self.assertNotIn("ASP.NET", by_name)
-        self.assertIn("same-host embedded php url suffix", by_name["PHP"].evidence)
+        self.assertIn("same-host embedded url: https://example.com/admin/index.php", by_name["PHP"].evidence)
 
     def test_java_ee_jsf_and_spring_markers(self):
         jsf = make_fetch(
