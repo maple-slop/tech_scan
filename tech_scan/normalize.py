@@ -40,7 +40,3 @@ def expand_targets(raw: str) -> list[TargetCandidate]:
         TargetCandidate(target, _validate_url(f"http://{target}")),
         TargetCandidate(target, _validate_url(f"https://{target}")),
     ]
-
-
-def normalize_target(raw: str) -> str:
-    return expand_targets(raw)[0].url

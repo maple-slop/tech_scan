@@ -3,8 +3,9 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from typing import Callable
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin
 
+from tech_scan.html_extract import extract_url_attrs
 from tech_scan.models import (
     DIM_BACKEND,
     DIM_CDN_WAF_SERVER,
@@ -12,6 +13,7 @@ from tech_scan.models import (
     FetchResult,
     Finding,
 )
+from tech_scan.url_policy import same_hostname
 
 from .base import Provider
 
@@ -220,34 +222,11 @@ RULES = [
 ]
 
 
-URL_ATTRS = {"href", "src", "action", "formaction"}
-
-
-def _same_hostname(first_url: str, second_url: str) -> bool:
-    return (urlparse(first_url).hostname or "").lower() == (
-        urlparse(second_url).hostname or ""
-    ).lower()
-
-
-def _extract_attr_urls(body: str) -> list[str]:
-    urls: list[str] = []
-    for tag in re.finditer(r"<[a-zA-Z][^>]*>", body, re.I | re.S):
-        attrs = tag.group(0)
-        for attr in re.finditer(
-            r"([a-zA-Z_:][-a-zA-Z0-9_:.]*)\s*=\s*([\"'])(.*?)\2",
-            attrs,
-            re.I | re.S,
-        ):
-            if attr.group(1).lower() in URL_ATTRS:
-                urls.append(attr.group(3))
-    return urls
-
-
 def _same_host_embedded_urls(fetch: FetchResult, body: str) -> list[str]:
     base_url = fetch.final_url or fetch.url
     if not base_url:
         return []
-    candidates = [*_extract_attr_urls(body), *fetch.script_srcs]
+    candidates = [*extract_url_attrs(body), *fetch.script_srcs]
     for resource in fetch.resources:
         if resource.url and resource.kind != "document":
             candidates.append(resource.url)
@@ -258,7 +237,7 @@ def _same_host_embedded_urls(fetch: FetchResult, body: str) -> list[str]:
         if not candidate or candidate.startswith(("mailto:", "tel:", "javascript:", "#")):
             continue
         absolute = urljoin(base_url, candidate)
-        if not _same_hostname(base_url, absolute):
+        if not same_hostname(base_url, absolute):
             continue
         if absolute not in seen:
             seen.add(absolute)

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from tech_scan.html_extract import extract_meta, extract_script_srcs
 from tech_scan.models import (
     DIM_BACKEND,
     DIM_CDN_WAF_SERVER,
@@ -60,7 +61,7 @@ WAF_ALLOWLIST = {
 
 
 @dataclass(frozen=True)
-class WappalyzerPattern:
+class _WappalyzerPattern:
     pattern: str
     confidence: int
 
@@ -73,7 +74,7 @@ def _as_list(value: object) -> list[object]:
     return [value]
 
 
-def parse_wappalyzer_pattern(value: object) -> WappalyzerPattern:
+def _parse_wappalyzer_pattern(value: object) -> _WappalyzerPattern:
     raw = str(value or "")
     parts = raw.split(r"\;")
     pattern = parts[0]
@@ -84,10 +85,10 @@ def parse_wappalyzer_pattern(value: object) -> WappalyzerPattern:
                 confidence = int(part.split(":", 1)[1])
             except ValueError:
                 confidence = 100
-    return WappalyzerPattern(pattern=pattern, confidence=max(0, min(confidence, 100)))
+    return _WappalyzerPattern(pattern=pattern, confidence=max(0, min(confidence, 100)))
 
 
-def _pattern_matches(pattern: WappalyzerPattern, haystack: str) -> bool:
+def _pattern_matches(pattern: _WappalyzerPattern, haystack: str) -> bool:
     if pattern.pattern == "":
         return True
     try:
@@ -96,38 +97,14 @@ def _pattern_matches(pattern: WappalyzerPattern, haystack: str) -> bool:
         return pattern.pattern.lower() in haystack.lower()
 
 
-def _extract_script_srcs(body: str) -> list[str]:
-    srcs: list[str] = []
-    for match in re.finditer(r"<script\b[^>]*\bsrc\s*=\s*([\"'])(.*?)\1", body, re.I | re.S):
-        srcs.append(match.group(2))
-    return srcs
-
-
-def _extract_meta(body: str) -> dict[str, list[str]]:
-    meta: dict[str, list[str]] = {}
-    for match in re.finditer(r"<meta\b([^>]*)>", body, re.I | re.S):
-        attrs = {
-            attr.group(1).lower(): attr.group(3)
-            for attr in re.finditer(r"([a-zA-Z_:][-a-zA-Z0-9_:.]*)\s*=\s*([\"'])(.*?)\2", match.group(1))
-        }
-        name = attrs.get("name") or attrs.get("property") or attrs.get("http-equiv")
-        content = attrs.get("content", "")
-        if name:
-            meta.setdefault(name.lower(), []).append(content)
-    return meta
-
-
-class WappalyzerJsonProvider(Provider):
-    name = "wappalyzer_json"
-
+class _WappalyzerFingerprintProvider(Provider):
     def __init__(
         self,
         data_path: Path | str | None = None,
         data: dict[str, Any] | None = None,
-        provider_name: str | None = None,
+        provider_name: str = "wappalyzer",
     ):
-        if provider_name:
-            self.name = provider_name
+        self.name = provider_name
         self.data_path = Path(data_path) if data_path is not None else None
         if data is None:
             if self.data_path is None:
@@ -140,9 +117,9 @@ class WappalyzerJsonProvider(Provider):
     def detect(self, fetch: FetchResult) -> list[Finding]:
         matched: dict[str, Finding] = {}
         body = fetch.body or ""
-        script_srcs = fetch.script_srcs or _extract_script_srcs(body)
+        script_srcs = fetch.script_srcs or extract_script_srcs(body)
         script_bodies = fetch.script_bodies
-        meta = _extract_meta(body)
+        meta = extract_meta(body)
 
         for app_name, app in self.apps.items():
             if not isinstance(app, dict):
@@ -240,7 +217,7 @@ class WappalyzerJsonProvider(Provider):
                 continue
             haystacks = values_lc[key] if isinstance(values_lc[key], list) else [values_lc[key]]
             for pattern_value in _as_list(raw_value):
-                pattern = parse_wappalyzer_pattern(pattern_value)
+                pattern = _parse_wappalyzer_pattern(pattern_value)
                 if any(_pattern_matches(pattern, str(haystack)) for haystack in haystacks):
                     confidence = max(confidence, pattern.confidence)
                     evidence_item = f"{evidence_prefix}: {raw_key}"
@@ -257,7 +234,7 @@ class WappalyzerJsonProvider(Provider):
     ) -> int:
         confidence = 0
         for pattern_value in _as_list(raw_patterns):
-            pattern = parse_wappalyzer_pattern(pattern_value)
+            pattern = _parse_wappalyzer_pattern(pattern_value)
             if any(_pattern_matches(pattern, haystack) for haystack in haystacks):
                 confidence = max(confidence, pattern.confidence)
                 if evidence_item not in evidence:
@@ -272,7 +249,7 @@ class WappalyzerJsonProvider(Provider):
         if not isinstance(app, dict):
             return
         for implied_value in _as_list(app.get("implies")):
-            implied_pattern = parse_wappalyzer_pattern(implied_value)
+            implied_pattern = _parse_wappalyzer_pattern(implied_value)
             implied = implied_pattern.pattern
             implied_app = self.apps.get(implied)
             if not isinstance(implied_app, dict) or implied in matched:

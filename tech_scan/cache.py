@@ -257,6 +257,3 @@ class ResponseCache:
                     (key, resource.parent_id, resource.id, resource.kind, index),
                 )
         self.conn.commit()
-
-
-ResultCache = ResponseCache

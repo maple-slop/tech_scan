@@ -203,8 +203,8 @@ class OutputTests(unittest.TestCase):
             ]
             sanity = SanityResult("ok", "example.com", (80,), open_ip="192.0.2.1", open_port=80)
 
-            with patch("tech_scan.cli.check_target_ports", return_value=sanity):
-                with patch("tech_scan.cli.fetch_requests", side_effect=fetches):
+            with patch("tech_scan.scanner.check_target_ports", return_value=sanity):
+                with patch("tech_scan.scanner.fetch_requests", side_effect=fetches):
                     with patch("sys.stdin", io.StringIO("example.com\n")):
                         stdout = io.StringIO()
                         with redirect_stdout(stdout):
@@ -238,8 +238,8 @@ class OutputTests(unittest.TestCase):
             ]
             sanity = SanityResult("ok", "example.com", (443,), open_ip="192.0.2.1", open_port=443)
 
-            with patch("tech_scan.cli.check_target_ports", return_value=sanity):
-                with patch("tech_scan.cli.fetch_requests", return_value=fetch):
+            with patch("tech_scan.scanner.check_target_ports", return_value=sanity):
+                with patch("tech_scan.scanner.fetch_requests", return_value=fetch):
                     with patch("sys.stdin", io.StringIO("https://example.com\n")):
                         stdout = io.StringIO()
                         with redirect_stdout(stdout):

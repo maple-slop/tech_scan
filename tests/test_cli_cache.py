@@ -5,9 +5,9 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from tech_scan.cli import scan_input, scan_target as scan_concrete_target
 from tech_scan.diagnostics import Diagnostics
 from tech_scan.models import FetchResult
+from tech_scan.scanner import scan_input, scan_target as scan_concrete_target
 from tech_scan.sanity import SanityResult
 
 
@@ -56,7 +56,7 @@ class CliCacheTests(unittest.TestCase):
         if self.sanity_patch is not None:
             self.sanity_patch.stop()
         self.sanity_patch = patch(
-            "tech_scan.cli.check_target_ports",
+            "tech_scan.scanner.check_target_ports",
             return_value=result,
         )
         self.sanity_mock = self.sanity_patch.start()
@@ -87,7 +87,7 @@ class CliCacheTests(unittest.TestCase):
                 ),
             ]
 
-            with patch("tech_scan.cli.fetch_requests", side_effect=fetches) as fetch_mock:
+            with patch("tech_scan.scanner.fetch_requests", side_effect=fetches) as fetch_mock:
                 results = scan_input("example.com", args_for(db), ["builtin"], ["builtin"])
 
         self.assertEqual([result["url"] for result in results], ["http://example.com", "https://example.com"])
@@ -119,7 +119,7 @@ class CliCacheTests(unittest.TestCase):
                 ),
             ]
 
-            with patch("tech_scan.cli.fetch_requests", side_effect=fetches):
+            with patch("tech_scan.scanner.fetch_requests", side_effect=fetches):
                 results = scan_input("example.com", args_for(db), ["builtin"], ["builtin"])
 
         self.assertEqual([result["url"] for result in results], ["http://example.com", "https://example.com"])
@@ -139,7 +139,7 @@ class CliCacheTests(unittest.TestCase):
                 mode="requests",
             )
 
-            with patch("tech_scan.cli.fetch_requests", return_value=fetch) as fetch_mock:
+            with patch("tech_scan.scanner.fetch_requests", return_value=fetch) as fetch_mock:
                 results = scan_input("https://example.com", args_for(db), ["builtin"], ["builtin"])
 
         self.assertEqual(len(results), 1)
@@ -173,7 +173,7 @@ class CliCacheTests(unittest.TestCase):
                 mode="requests",
             )
 
-            with patch("tech_scan.cli.fetch_requests", return_value=fetch) as fetch_mock:
+            with patch("tech_scan.scanner.fetch_requests", return_value=fetch) as fetch_mock:
                 first = scan_target("example.com", args_for(db), ["builtin"], ["builtin"])
                 second = scan_target(
                     "example.com",
@@ -201,7 +201,7 @@ class CliCacheTests(unittest.TestCase):
                 mode="requests",
             )
 
-            with patch("tech_scan.cli.fetch_requests", return_value=fetch) as fetch_mock:
+            with patch("tech_scan.scanner.fetch_requests", return_value=fetch) as fetch_mock:
                 scan_target("example.com", args_for(db), ["builtin"], ["builtin"])
                 refreshed = scan_target(
                     "example.com",
@@ -227,8 +227,8 @@ class CliCacheTests(unittest.TestCase):
                 mode="requests",
             )
 
-            with patch("tech_scan.cli.fetch_requests", return_value=fetch):
-                with patch("tech_scan.cli.fetch_browser") as browser_mock:
+            with patch("tech_scan.scanner.fetch_requests", return_value=fetch):
+                with patch("tech_scan.scanner.fetch_browser") as browser_mock:
                     result = scan_target(
                         "example.com",
                         args_for(db, mode="auto"),
@@ -265,7 +265,7 @@ class CliCacheTests(unittest.TestCase):
             )
             args = args_for(db, mode="browser")
 
-            with patch("tech_scan.cli.fetch_browser", side_effect=[first_fetch, second_fetch]) as fetch_mock:
+            with patch("tech_scan.scanner.fetch_browser", side_effect=[first_fetch, second_fetch]) as fetch_mock:
                 with patch.dict("os.environ", {"CHROMIUM_PATH": "/old/chrome"}):
                     first = scan_target("example.com", args, ["builtin"], ["builtin"])
                 with patch.dict("os.environ", {"CHROMIUM_PATH": "/new/chrome"}):
@@ -302,7 +302,7 @@ class CliCacheTests(unittest.TestCase):
             )
             args = args_for(db, mode="browser")
 
-            with patch("tech_scan.cli.fetch_browser", side_effect=[failed_fetch, successful_fetch]) as fetch_mock:
+            with patch("tech_scan.scanner.fetch_browser", side_effect=[failed_fetch, successful_fetch]) as fetch_mock:
                 first = scan_target("example.com", args, ["builtin"], ["builtin"])
                 second = scan_target("example.com", args, ["builtin"], ["builtin"])
 
@@ -338,8 +338,8 @@ class CliCacheTests(unittest.TestCase):
                 mode="browser",
             )
 
-            with patch("tech_scan.cli.fetch_requests", return_value=fetch):
-                with patch("tech_scan.cli.fetch_browser", return_value=browser_fetch):
+            with patch("tech_scan.scanner.fetch_requests", return_value=fetch):
+                with patch("tech_scan.scanner.fetch_browser", return_value=browser_fetch):
                     result = scan_target("example.com", args, ["builtin"], ["builtin"])
 
             self.assertEqual(result["mode"], "browser")
@@ -365,7 +365,7 @@ class CliCacheTests(unittest.TestCase):
 
         with TemporaryDirectory() as tmpdir:
             db = Path(tmpdir) / "results.db"
-            with patch("tech_scan.cli.fetch_requests", side_effect=fake_fetch_requests):
+            with patch("tech_scan.scanner.fetch_requests", side_effect=fake_fetch_requests):
                 quiet = scan_target(
                     "example.com",
                     args_for(db, mode="requests", verbosity=0),
@@ -399,7 +399,7 @@ class CliCacheTests(unittest.TestCase):
                 mode="requests",
             )
 
-            with patch("tech_scan.cli.fetch_requests", return_value=fetch):
+            with patch("tech_scan.scanner.fetch_requests", return_value=fetch):
                 scan_target("example.com", args, ["builtin"], ["builtin"])
 
             logs = stderr.getvalue()
@@ -423,10 +423,10 @@ class CliCacheTests(unittest.TestCase):
                 mode="requests",
             )
 
-            with patch("tech_scan.cli.fetch_requests", return_value=fetch):
+            with patch("tech_scan.scanner.fetch_requests", return_value=fetch):
                 scan_target("example.com", args_for(db), ["builtin"], ["builtin"])
             self.sanity_mock.reset_mock()
-            with patch("tech_scan.cli.fetch_requests") as fetch_mock:
+            with patch("tech_scan.scanner.fetch_requests") as fetch_mock:
                 result = scan_target("example.com", args_for(db), ["builtin"], ["builtin"])
 
             self.assertTrue(result["cached"])
@@ -444,7 +444,7 @@ class CliCacheTests(unittest.TestCase):
         )
         with TemporaryDirectory() as tmpdir:
             db = Path(tmpdir) / "results.db"
-            with patch("tech_scan.cli.fetch_requests") as fetch_mock:
+            with patch("tech_scan.scanner.fetch_requests") as fetch_mock:
                 result = scan_target("example.com", args_for(db), ["builtin"], ["builtin"])
 
             fetch_mock.assert_not_called()
@@ -468,7 +468,7 @@ class CliCacheTests(unittest.TestCase):
                 body="ok",
                 mode="requests",
             )
-            with patch("tech_scan.cli.fetch_requests", return_value=fetch) as fetch_mock:
+            with patch("tech_scan.scanner.fetch_requests", return_value=fetch) as fetch_mock:
                 result = scan_target("example.com", args_for(db), ["builtin"], ["builtin"])
 
             self.assertEqual(result["status"], 200)

@@ -8,7 +8,6 @@ from tech_scan.providers import (
     WappalyzerGoProvider,
     build_providers,
     merge_findings,
-    parse_wappalyzer_pattern,
 )
 from tech_scan.providers.wappalyzergo import load_vendored_fingerprints
 
@@ -164,11 +163,22 @@ class ProviderTests(unittest.TestCase):
 
         self.assertLessEqual({"builtin", "wappalyzergo"}, {provider.name for provider in providers})
 
-    def test_wappalyzer_pattern_metadata_parser(self):
-        parsed = parse_wappalyzer_pattern(r"react\.js\;confidence:75\;version:\1")
+    def test_wappalyzer_pattern_metadata_affects_provider_confidence(self):
+        provider = WappalyzerGoProvider(
+            {
+                "apps": {
+                    "React": {
+                        "cats": [12],
+                        "scriptSrc": [r"react\.js\;confidence:75\;version:\1"],
+                    }
+                }
+            }
+        )
 
-        self.assertEqual(parsed.pattern, r"react\.js")
-        self.assertEqual(parsed.confidence, 75)
+        detected = provider.detect(make_fetch(body='<script src="/react.js"></script>'))
+
+        self.assertEqual(detected[0].name, "React")
+        self.assertEqual(detected[0].confidence, 75)
 
     def test_url_suffixes_detect_backend_tech(self):
         cases = [

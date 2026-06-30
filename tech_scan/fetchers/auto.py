@@ -49,10 +49,6 @@ def has_useful_response(fetch: FetchResult) -> bool:
     return bool(fetch.status or fetch.headers or fetch.body.strip())
 
 
-def should_try_browser(fetch: FetchResult, findings_count: int) -> bool:
-    return browser_fallback_reason(fetch, findings_count) is not None
-
-
 def browser_fallback_reason(fetch: FetchResult, findings_count: int) -> str | None:
     if fetch.error:
         return "request-error"

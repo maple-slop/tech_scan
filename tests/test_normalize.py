@@ -1,6 +1,6 @@
 import unittest
 
-from tech_scan.normalize import expand_targets, normalize_target
+from tech_scan.normalize import expand_targets
 
 
 class NormalizeTests(unittest.TestCase):
@@ -28,7 +28,7 @@ class NormalizeTests(unittest.TestCase):
 
     def test_normalize_rejects_unsupported_scheme(self):
         with self.assertRaises(ValueError):
-            normalize_target("ftp://example.com")
+            expand_targets("ftp://example.com")
 
     def test_bare_port_requires_scheme(self):
         with self.assertRaisesRegex(ValueError, "scheme is required"):

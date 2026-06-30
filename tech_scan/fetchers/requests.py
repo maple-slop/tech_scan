@@ -1,14 +1,15 @@
 from __future__ import annotations
 
-import re
 import warnings
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin
 
 import requests
 from urllib3.exceptions import InsecureRequestWarning
 
 from tech_scan.diagnostics import Diagnostics, exception_with_traceback, short_exception
+from tech_scan.html_extract import extract_script_srcs
 from tech_scan.models import FetchResult, ResourceObservation
+from tech_scan.url_policy import redirect_target, same_hostname
 
 from .adblock import is_blocked_script_url
 from .headers import BROWSER_HEADERS
@@ -19,27 +20,6 @@ MAX_SCRIPT_BODY_BYTES = 1024 * 1024
 
 def _cookie_dict(cookies: requests.cookies.RequestsCookieJar) -> dict[str, str]:
     return {cookie.name: cookie.value for cookie in cookies}
-
-
-def extract_script_srcs(body: str) -> list[str]:
-    return [
-        match.group(2)
-        for match in re.finditer(
-            r"<script\b[^>]*\bsrc\s*=\s*([\"'])(.*?)\1", body, re.I | re.S
-        )
-    ]
-
-
-def same_hostname(first_url: str, second_url: str) -> bool:
-    return (urlparse(first_url).hostname or "").lower() == (
-        urlparse(second_url).hostname or ""
-    ).lower()
-
-
-def redirect_target(current_url: str, location: str | None) -> str | None:
-    if not location:
-        return None
-    return urljoin(current_url, location)
 
 
 def is_redirect_status(status_code: int) -> bool:

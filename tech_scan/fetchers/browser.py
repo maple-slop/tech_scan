@@ -13,7 +13,7 @@ from tech_scan.diagnostics import Diagnostics, exception_with_traceback, short_e
 from tech_scan.models import FetchResult, ResourceObservation
 
 from .headers import BROWSER_HEADERS
-from .requests import same_hostname
+from tech_scan.url_policy import same_hostname
 
 UBOL_PACKAGE = "tech_scan.fetchers.data.ubol"
 UBOL_VERSION = "2026.628.2035"

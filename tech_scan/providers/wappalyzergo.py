@@ -4,7 +4,7 @@ import json
 from importlib import resources
 from typing import Any
 
-from .wappalyzer_json import WappalyzerJsonProvider
+from .wappalyzer_engine import _WappalyzerFingerprintProvider
 
 
 DATA_PACKAGE = "tech_scan.providers.data.wappalyzergo"
@@ -17,7 +17,7 @@ def load_vendored_fingerprints() -> dict[str, Any]:
     return loaded if isinstance(loaded, dict) else {}
 
 
-class WappalyzerGoProvider(WappalyzerJsonProvider):
+class WappalyzerGoProvider(_WappalyzerFingerprintProvider):
     name = "wappalyzergo"
 
     def __init__(self, data: dict[str, Any] | None = None):

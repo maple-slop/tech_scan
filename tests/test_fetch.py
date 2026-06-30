@@ -14,18 +14,18 @@ from unittest.mock import patch
 from urllib3.exceptions import InsecureRequestWarning
 
 from tech_scan.diagnostics import Diagnostics
-from tech_scan.fetchers import (
+from tech_scan.fetchers.adblock import is_blocked_script_url
+from tech_scan.fetchers.auto import browser_fallback_reason
+from tech_scan.fetchers.browser import (
     BrowserSession,
     browser_extension_identity,
     chromium_executable_path,
-    fetch_requests,
-    redirect_target,
-    same_hostname,
-    should_try_browser,
     ubol_extension_path,
 )
-from tech_scan.fetchers.adblock import is_blocked_script_url
+from tech_scan.fetchers.requests import fetch_requests
+from tech_scan.html_extract import extract_meta, extract_script_srcs, extract_url_attrs
 from tech_scan.models import FetchResult
+from tech_scan.url_policy import redirect_target, same_hostname
 
 
 class FakeResponse:
@@ -234,6 +234,21 @@ class FetchTests(unittest.TestCase):
         self.assertEqual(
             redirect_target("https://example.com/a/b", "../login"),
             "https://example.com/login",
+        )
+
+    def test_shared_html_extractors_handle_scripts_meta_and_urls(self):
+        body = (
+            '<meta name="csrf-token" content="abc">'
+            '<script src="/app.js"></script>'
+            '<a href="/admin"></a>'
+            '<form action="/save" formaction="/alternate"></form>'
+        )
+
+        self.assertEqual(extract_script_srcs(body), ["/app.js"])
+        self.assertEqual(extract_meta(body), {"csrf-token": ["abc"]})
+        self.assertEqual(
+            extract_url_attrs(body),
+            ["/app.js", "/admin", "/save", "/alternate"],
         )
 
     def test_requests_follow_same_host_redirect(self):
@@ -749,7 +764,7 @@ class FetchTests(unittest.TestCase):
             mode="requests",
         )
 
-        self.assertFalse(should_try_browser(fetch, findings_count=0))
+        self.assertIsNone(browser_fallback_reason(fetch, findings_count=0))
 
     def test_auto_retries_request_errors_and_blocking_statuses(self):
         errored = FetchResult(
@@ -763,7 +778,7 @@ class FetchTests(unittest.TestCase):
             mode="requests",
             error="connection failed",
         )
-        self.assertTrue(should_try_browser(errored, findings_count=0))
+        self.assertIsNotNone(browser_fallback_reason(errored, findings_count=0))
 
         for status in [401, 403, 429, 503]:
             with self.subTest(status=status):
@@ -777,7 +792,7 @@ class FetchTests(unittest.TestCase):
                     body="blocked",
                     mode="requests",
                 )
-                self.assertTrue(should_try_browser(blocked, findings_count=1))
+                self.assertIsNotNone(browser_fallback_reason(blocked, findings_count=1))
 
     def test_auto_retries_explicit_javascript_required_text(self):
         fetch = FetchResult(
@@ -791,7 +806,7 @@ class FetchTests(unittest.TestCase):
             mode="requests",
         )
 
-        self.assertTrue(should_try_browser(fetch, findings_count=1))
+        self.assertIsNotNone(browser_fallback_reason(fetch, findings_count=1))
 
     def test_auto_retries_sparse_spa_shell_without_findings(self):
         fetch = FetchResult(
@@ -806,8 +821,8 @@ class FetchTests(unittest.TestCase):
             script_srcs=["/app.js"],
         )
 
-        self.assertTrue(should_try_browser(fetch, findings_count=0))
-        self.assertFalse(should_try_browser(fetch, findings_count=1))
+        self.assertIsNotNone(browser_fallback_reason(fetch, findings_count=0))
+        self.assertIsNone(browser_fallback_reason(fetch, findings_count=1))
 
     def test_auto_retries_next_nuxt_markers_when_sparse(self):
         fetch = FetchResult(
@@ -821,8 +836,8 @@ class FetchTests(unittest.TestCase):
             mode="requests",
         )
 
-        self.assertTrue(should_try_browser(fetch, findings_count=0))
-        self.assertFalse(should_try_browser(fetch, findings_count=1))
+        self.assertIsNotNone(browser_fallback_reason(fetch, findings_count=0))
+        self.assertIsNone(browser_fallback_reason(fetch, findings_count=1))
 
 
 if __name__ == "__main__":
