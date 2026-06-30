@@ -7,7 +7,6 @@ from urllib.parse import urlparse
 from .diagnostics import Diagnostics, exception_with_traceback, short_exception
 
 
-DEFAULT_BARE_PORTS = (80, 443)
 SCHEME_PORTS = {"http": 80, "https": 443}
 
 
@@ -34,9 +33,7 @@ class SanityResult:
 
 
 def derive_port_target(raw_input: str, normalized_url: str) -> PortTarget:
-    raw = raw_input.strip()
-    has_scheme = "://" in raw
-    parsed = urlparse(raw if has_scheme else normalized_url)
+    parsed = urlparse(normalized_url)
     host = parsed.hostname
     if not host:
         raise ValueError("missing host")
@@ -46,9 +43,9 @@ def derive_port_target(raw_input: str, normalized_url: str) -> PortTarget:
         raise ValueError(str(exc)) from exc
     if port is not None:
         return PortTarget(host, (port,))
-    if has_scheme:
-        return PortTarget(host, (SCHEME_PORTS[parsed.scheme],))
-    return PortTarget(host, DEFAULT_BARE_PORTS)
+    if parsed.scheme not in SCHEME_PORTS:
+        raise ValueError(f"unsupported URL scheme: {parsed.scheme}")
+    return PortTarget(host, (SCHEME_PORTS[parsed.scheme],))
 
 
 def _dedupe_address_infos(address_infos: list[tuple]) -> list[tuple[str, int]]:

@@ -36,7 +36,7 @@ Fetch modes:
 Output modes:
 
 - `human`: default, multi-line colorized output.
-- `jsonl`: one stable JSON object per input line.
+- `jsonl`: one stable JSON object per scanned URL. Bare domains scan both HTTP and HTTPS and therefore emit two objects.
 
 Human output must include all fields present in JSONL.
 
@@ -46,7 +46,7 @@ Diagnostics:
 - `--verbosity 1`: adds fetcher-switch reasons and redirect traces on stderr.
 - `--verbosity 2`: includes stack traces for live top-level fetch failures and stderr exception diagnostics.
 - `--verbosity 3`: adds detailed cache, fetch, browser, resource, provider, and timing logs on stderr.
-- Keep verbose diagnostics on stderr so JSONL stdout remains one machine-readable object per input line.
+- Keep verbose diagnostics on stderr so JSONL stdout remains one machine-readable object per scanned URL.
 
 ## Architecture
 
@@ -82,7 +82,7 @@ Requests mode fetches directly visible `<script src>` resources and links them t
 
 Redirects must stay on the same hostname. This prevents an app that redirects to a third-party SSO provider from being reported as the third-party site.
 
-Fresh fetches run a default-on DNS/TCP sanity check before requests or browser mode. Bare domains check ports `80` and `443`; URL inputs check explicit ports when present, otherwise the scheme default. Cache hits bypass this check. Keep sanity failures uncached.
+Fresh fetches run a default-on DNS/TCP sanity check before requests or browser mode. Bare domains expand to `http://` and `https://` scans; each concrete URL checks its explicit port when present, otherwise `80` for HTTP or `443` for HTTPS. Cache hits bypass this check. Keep sanity failures uncached.
 
 Browser mode uses one shared Playwright Chromium session per scan run. Keep Playwright sync API lifecycle on one thread. Use `CHROMIUM_PATH` when set, otherwise `/usr/bin/chromium` when executable, otherwise Playwright default lookup.
 

@@ -7,7 +7,6 @@ import requests
 
 from tech_scan.diagnostics import Diagnostics, exception_with_traceback, short_exception
 from tech_scan.models import FetchResult, ResourceObservation
-from tech_scan.normalize import http_fallback_url
 
 from .adblock import is_blocked_script_url
 from .headers import BROWSER_HEADERS
@@ -151,95 +150,89 @@ def fetch_requests(
     if verify is not None:
         request_kwargs["verify"] = verify
 
-    last_error: str | None = None
-    for candidate in [url, http_fallback_url(url)]:
-        if not candidate:
-            continue
-        try:
-            if diagnostics:
-                diagnostics.log(3, f"requests fetch start: {candidate}")
-            response = _get_with_same_host_redirects(
-                session,
-                candidate,
-                timeout,
-                proxies,
-                request_kwargs,
-                diagnostics,
+    try:
+        if diagnostics:
+            diagnostics.log(3, f"requests fetch start: {url}")
+        response = _get_with_same_host_redirects(
+            session,
+            url,
+            timeout,
+            proxies,
+            request_kwargs,
+            diagnostics,
+        )
+        document = _resource_from_response("document:0", "document", url, response)
+        if diagnostics:
+            diagnostics.log(
+                3,
+                f"requests fetch end: {url} status={document.status} "
+                f"final_url={document.final_url}",
             )
-            document = _resource_from_response("document:0", "document", candidate, response)
-            if diagnostics:
-                diagnostics.log(
-                    3,
-                    f"requests fetch end: {candidate} status={document.status} "
-                    f"final_url={document.final_url}",
+        body = document.body
+        script_srcs = extract_script_srcs(body)
+        resources = [document]
+        base_url = response.url or url
+        for index, src in enumerate(script_srcs[:MAX_SCRIPT_RESOURCES]):
+            script_url = urljoin(base_url, src)
+            if is_blocked_script_url(script_url):
+                if diagnostics:
+                    diagnostics.log(3, f"requests script skipped by adblock: {script_url}")
+                continue
+            resource_id = f"script:{index}"
+            try:
+                if diagnostics:
+                    diagnostics.log(3, f"requests script fetch start: {script_url}")
+                script_response = _get_with_same_host_redirects(
+                    session,
+                    script_url,
+                    timeout,
+                    proxies,
+                    request_kwargs,
+                    diagnostics,
                 )
-            body = document.body
-            script_srcs = extract_script_srcs(body)
-            resources = [document]
-            base_url = response.url or candidate
-            for index, src in enumerate(script_srcs[:MAX_SCRIPT_RESOURCES]):
-                script_url = urljoin(base_url, src)
-                if is_blocked_script_url(script_url):
-                    if diagnostics:
-                        diagnostics.log(3, f"requests script skipped by adblock: {script_url}")
-                    continue
-                resource_id = f"script:{index}"
-                try:
-                    if diagnostics:
-                        diagnostics.log(3, f"requests script fetch start: {script_url}")
-                    script_response = _get_with_same_host_redirects(
-                        session,
+                resources.append(
+                    _resource_from_response(
+                        resource_id,
+                        "script",
                         script_url,
-                        timeout,
-                        proxies,
-                        request_kwargs,
-                        diagnostics,
+                        script_response,
+                        parent_id=document.id,
+                        max_body_bytes=MAX_SCRIPT_BODY_BYTES,
                     )
-                    resources.append(
-                        _resource_from_response(
-                            resource_id,
-                            "script",
-                            script_url,
-                            script_response,
-                            parent_id=document.id,
-                            max_body_bytes=MAX_SCRIPT_BODY_BYTES,
-                        )
+                )
+                if diagnostics:
+                    diagnostics.log(3, f"requests script fetch end: {script_url}")
+            except requests.RequestException as exc:
+                if diagnostics:
+                    diagnostics.exception(2, f"requests script fetch failed: {script_url}", exc)
+                resources.append(
+                    _error_resource(
+                        resource_id,
+                        "script",
+                        script_url,
+                        short_exception(exc),
+                        parent_id=document.id,
                     )
-                    if diagnostics:
-                        diagnostics.log(3, f"requests script fetch end: {script_url}")
-                except requests.RequestException as exc:
-                    if diagnostics:
-                        diagnostics.exception(2, f"requests script fetch failed: {script_url}", exc)
-                    resources.append(
-                        _error_resource(
-                            resource_id,
-                            "script",
-                            script_url,
-                            short_exception(exc),
-                            parent_id=document.id,
-                        )
-                    )
-            return FetchResult(
-                input=target_input,
-                url=document.url,
-                final_url=document.final_url,
-                status=document.status,
-                headers=document.headers,
-                cookies=document.cookies,
-                body=body,
-                mode="requests",
-                script_srcs=[urljoin(base_url, src) for src in script_srcs],
-                resources=resources,
-                primary_resource_id=document.id,
-            )
-        except requests.RequestException as exc:
-            if diagnostics:
-                diagnostics.exception(2, f"requests fetch failed: {candidate}", exc)
-            last_error = (
-                exception_with_traceback(exc) if include_traceback else short_exception(exc)
-            )
+                )
+        return FetchResult(
+            input=target_input,
+            url=document.url,
+            final_url=document.final_url,
+            status=document.status,
+            headers=document.headers,
+            cookies=document.cookies,
+            body=body,
+            mode="requests",
+            script_srcs=[urljoin(base_url, src) for src in script_srcs],
+            resources=resources,
+            primary_resource_id=document.id,
+        )
+    except requests.RequestException as exc:
+        if diagnostics:
+            diagnostics.exception(2, f"requests fetch failed: {url}", exc)
+        error = exception_with_traceback(exc) if include_traceback else short_exception(exc)
 
-    error_resource = _error_resource("document:0", "document", url, last_error or "request failed")
+    error_resource = _error_resource("document:0", "document", url, error or "request failed")
     return FetchResult(
         input=target_input,
         url=url,
@@ -249,7 +242,7 @@ def fetch_requests(
         cookies={},
         body="",
         mode="requests",
-        error=last_error or "request failed",
+        error=error or "request failed",
         resources=[error_resource],
         primary_resource_id=error_resource.id,
     )

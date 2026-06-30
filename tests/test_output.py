@@ -8,6 +8,7 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from tech_scan.cli import main, parse_args, resolve_provider_names
+from tech_scan.models import FetchResult
 from tech_scan.output import (
     confidence_color,
     evidence_color,
@@ -15,6 +16,7 @@ from tech_scan.output import (
     format_jsonl,
     origin_display_url,
 )
+from tech_scan.sanity import SanityResult
 
 
 RESULT = {
@@ -162,6 +164,89 @@ class OutputTests(unittest.TestCase):
         self.assertEqual(parse_args([]).sanity_timeout, 1.0)
         self.assertEqual(parse_args(["--sanity-timeout", "0.25"]).sanity_timeout, 0.25)
 
+    def test_main_jsonl_outputs_two_results_for_bare_domain(self):
+        with TemporaryDirectory() as tmpdir:
+            db = Path(tmpdir) / "results.db"
+            fetches = [
+                FetchResult(
+                    input="example.com",
+                    url="http://example.com",
+                    final_url="http://example.com",
+                    status=200,
+                    headers={},
+                    cookies={},
+                    body="http",
+                    mode="requests",
+                ),
+                FetchResult(
+                    input="example.com",
+                    url="https://example.com",
+                    final_url="https://example.com",
+                    status=200,
+                    headers={},
+                    cookies={},
+                    body="https",
+                    mode="requests",
+                ),
+            ]
+            args = [
+                "--db",
+                str(db),
+                "--mode",
+                "requests",
+                "--output",
+                "jsonl",
+                "--concurrency",
+                "1",
+            ]
+            sanity = SanityResult("ok", "example.com", (80,), open_ip="192.0.2.1", open_port=80)
+
+            with patch("tech_scan.cli.check_target_ports", return_value=sanity):
+                with patch("tech_scan.cli.fetch_requests", side_effect=fetches):
+                    with patch("sys.stdin", io.StringIO("example.com\n")):
+                        stdout = io.StringIO()
+                        with redirect_stdout(stdout):
+                            self.assertEqual(main(args), 0)
+
+        lines = [json.loads(line) for line in stdout.getvalue().splitlines()]
+        self.assertEqual([line["url"] for line in lines], ["http://example.com", "https://example.com"])
+
+    def test_main_jsonl_outputs_one_result_for_explicit_scheme(self):
+        with TemporaryDirectory() as tmpdir:
+            db = Path(tmpdir) / "results.db"
+            fetch = FetchResult(
+                input="https://example.com",
+                url="https://example.com",
+                final_url="https://example.com",
+                status=200,
+                headers={},
+                cookies={},
+                body="https",
+                mode="requests",
+            )
+            args = [
+                "--db",
+                str(db),
+                "--mode",
+                "requests",
+                "--output",
+                "jsonl",
+                "--concurrency",
+                "1",
+            ]
+            sanity = SanityResult("ok", "example.com", (443,), open_ip="192.0.2.1", open_port=443)
+
+            with patch("tech_scan.cli.check_target_ports", return_value=sanity):
+                with patch("tech_scan.cli.fetch_requests", return_value=fetch):
+                    with patch("sys.stdin", io.StringIO("https://example.com\n")):
+                        stdout = io.StringIO()
+                        with redirect_stdout(stdout):
+                            self.assertEqual(main(args), 0)
+
+        lines = [json.loads(line) for line in stdout.getvalue().splitlines()]
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(lines[0]["url"], "https://example.com")
+
     def test_main_human_output_separates_entries_with_blank_line(self):
         with TemporaryDirectory() as tmpdir:
             db = Path(tmpdir) / "results.db"
@@ -186,7 +271,7 @@ class OutputTests(unittest.TestCase):
                 "error": None,
             }
 
-            with patch("tech_scan.cli.scan_target", return_value=fetch_result):
+            with patch("tech_scan.cli.scan_input", return_value=[fetch_result]):
                 with patch("sys.stdin", io.StringIO("a.example\nb.example\n")):
                     stdout = io.StringIO()
                     with redirect_stdout(stdout):
@@ -197,12 +282,12 @@ class OutputTests(unittest.TestCase):
     def test_main_requests_output_is_eager_completion_order(self):
         first_can_finish = threading.Event()
 
-        def fake_scan_target(target, args, providers_requested, provider_names, browser_session=None):
+        def fake_scan_input(target, args, providers_requested, provider_names, browser_session=None):
             if target == "a.example":
                 self.assertTrue(first_can_finish.wait(timeout=5))
             else:
                 first_can_finish.set()
-            return {
+            return [{
                 "input": target,
                 "url": f"https://{target}/",
                 "status": 200,
@@ -211,7 +296,7 @@ class OutputTests(unittest.TestCase):
                 "cached": False,
                 "technologies": [],
                 "error": None,
-            }
+            }]
 
         with TemporaryDirectory() as tmpdir:
             args = [
@@ -224,7 +309,7 @@ class OutputTests(unittest.TestCase):
                 "--concurrency",
                 "2",
             ]
-            with patch("tech_scan.cli.scan_target", side_effect=fake_scan_target):
+            with patch("tech_scan.cli.scan_input", side_effect=fake_scan_input):
                 with patch("sys.stdin", io.StringIO("a.example\nb.example\n")):
                     stdout = io.StringIO()
                     with redirect_stdout(stdout):
@@ -258,9 +343,9 @@ class OutputTests(unittest.TestCase):
             def close(self):
                 self.closed = True
 
-        def fake_scan_target(target, args, providers_requested, provider_names, browser_session=None):
+        def fake_scan_input(target, args, providers_requested, provider_names, browser_session=None):
             self.assertIs(browser_session, sessions[0])
-            return {
+            return [{
                 "input": target,
                 "url": f"https://{target}/",
                 "status": 200,
@@ -269,7 +354,7 @@ class OutputTests(unittest.TestCase):
                 "cached": False,
                 "technologies": [],
                 "error": None,
-            }
+            }]
 
         with TemporaryDirectory() as tmpdir:
             args = [
@@ -281,7 +366,7 @@ class OutputTests(unittest.TestCase):
                 "jsonl",
             ]
             with patch("tech_scan.cli.BrowserSession", FakeBrowserSession):
-                with patch("tech_scan.cli.scan_target", side_effect=fake_scan_target) as scan_mock:
+                with patch("tech_scan.cli.scan_input", side_effect=fake_scan_input) as scan_mock:
                     with patch("sys.stdin", io.StringIO("a.example\nb.example\n")):
                         stdout = io.StringIO()
                         with redirect_stdout(stdout):
@@ -292,9 +377,9 @@ class OutputTests(unittest.TestCase):
         self.assertEqual(scan_mock.call_count, 2)
 
     def test_jsonl_output_stays_stdout_and_verbosity_logs_go_to_stderr(self):
-        def fake_scan_target(target, args, providers_requested, provider_names, browser_session=None):
+        def fake_scan_input(target, args, providers_requested, provider_names, browser_session=None):
             args._diagnostics.log(1, f"diagnostic for {target}")
-            return {
+            return [{
                 "input": target,
                 "url": f"https://{target}/",
                 "status": 200,
@@ -303,7 +388,7 @@ class OutputTests(unittest.TestCase):
                 "cached": False,
                 "technologies": [],
                 "error": None,
-            }
+            }]
 
         with TemporaryDirectory() as tmpdir:
             args = [
@@ -316,7 +401,7 @@ class OutputTests(unittest.TestCase):
                 "--verbosity",
                 "1",
             ]
-            with patch("tech_scan.cli.scan_target", side_effect=fake_scan_target):
+            with patch("tech_scan.cli.scan_input", side_effect=fake_scan_input):
                 with patch("sys.stdin", io.StringIO("a.example\n")):
                     stdout = io.StringIO()
                     stderr = io.StringIO()

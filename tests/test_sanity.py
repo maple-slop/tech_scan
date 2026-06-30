@@ -22,8 +22,6 @@ class FakeSocket:
 class SanityTests(unittest.TestCase):
     def test_derives_ports_from_input_shape(self):
         cases = [
-            ("example.com", "https://example.com", "example.com", (80, 443)),
-            ("example.com:8080", "https://example.com:8080", "example.com", (8080,)),
             ("http://example.com/path", "http://example.com/path", "example.com", (80,)),
             ("https://example.com/path", "https://example.com/path", "example.com", (443,)),
             ("https://example.com:8443/path", "https://example.com:8443/path", "example.com", (8443,)),
@@ -63,7 +61,7 @@ class SanityTests(unittest.TestCase):
             "tech_scan.sanity.socket.getaddrinfo",
             side_effect=socket.gaierror("no host"),
         ):
-            result = check_target_ports("example.com", "https://example.com", 1)
+            result = check_target_ports("example.com", "http://example.com", 1)
 
         self.assertEqual(result.status, "dns-error")
         self.assertIn("DNS resolution failed", result.error)
@@ -71,13 +69,14 @@ class SanityTests(unittest.TestCase):
     def test_fails_when_all_connection_attempts_fail(self):
         with patch(
             "tech_scan.sanity.socket.getaddrinfo",
-            return_value=[addrinfo("192.0.2.1", 80), addrinfo("192.0.2.1", 443)],
+            return_value=[addrinfo("192.0.2.1", 80)],
         ):
             with patch("tech_scan.sanity.socket.create_connection", side_effect=OSError("closed")):
-                result = check_target_ports("example.com", "https://example.com", 1)
+                result = check_target_ports("example.com", "http://example.com", 1)
 
         self.assertEqual(result.status, "no-open-port")
         self.assertIn("no open port", result.error)
+        self.assertEqual(result.ports, (80,))
 
     def test_tries_a_and_aaaa_results(self):
         with patch(

@@ -377,7 +377,7 @@ class FetchTests(unittest.TestCase):
 
         self.assertIsNone(result.status)
         assert result.error is not None
-        self.assertIn("cannot fetch http://example.com", result.error)
+        self.assertIn("cannot fetch https://example.com", result.error)
         self.assertNotIn("Traceback (most recent call last):", result.error)
 
     def test_requests_primary_fetch_errors_include_traceback_when_requested(self):

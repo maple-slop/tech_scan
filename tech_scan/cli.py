@@ -19,7 +19,7 @@ from .fetchers import (
     fetch_requests,
 )
 from .models import FetchResult
-from .normalize import normalize_target
+from .normalize import expand_targets
 from .output import format_result
 from .providers import build_providers, merge_findings
 from .sanity import check_target_ports
@@ -68,7 +68,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
             "Detect website technologies for domains read from stdin. "
-            "Defaults to human-readable output; use --output jsonl for one JSON object per input line."
+            "Defaults to human-readable output; use --output jsonl for one JSON object per scanned URL."
         ),
         epilog=(
             "Examples: "
@@ -172,7 +172,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default="human",
         help=(
             "Output format. human prints colorized multi-line blocks; jsonl prints one JSON object "
-            "per input line. Default: human."
+            "per scanned URL. Bare domains scan both HTTP and HTTPS. Default: human."
         ),
     )
     parser.add_argument(
@@ -199,26 +199,12 @@ def resolve_provider_names(
 
 def scan_target(
     raw_target: str,
+    target: str,
     args: argparse.Namespace,
     providers_requested: list[str],
     provider_names: list[str],
     browser_session: BrowserSession | None = None,
 ) -> dict[str, Any]:
-    raw_target = raw_target.strip()
-    try:
-        target = normalize_target(raw_target)
-    except ValueError as exc:
-        return {
-            "input": raw_target,
-            "url": None,
-            "status": None,
-            "mode": args.mode,
-            "providers": provider_names,
-            "cached": False,
-            "technologies": [],
-            "error": str(exc),
-        }
-
     providers = build_providers(providers_requested)
     findings = []
     fetch: FetchResult | None = None
@@ -362,6 +348,43 @@ def scan_target(
     return result
 
 
+def scan_input(
+    raw_target: str,
+    args: argparse.Namespace,
+    providers_requested: list[str],
+    provider_names: list[str],
+    browser_session: BrowserSession | None = None,
+) -> list[dict[str, Any]]:
+    raw_target = raw_target.strip()
+    try:
+        candidates = expand_targets(raw_target)
+    except ValueError as exc:
+        return [
+            {
+                "input": raw_target,
+                "url": None,
+                "status": None,
+                "mode": args.mode,
+                "providers": provider_names,
+                "cached": False,
+                "technologies": [],
+                "error": str(exc),
+            }
+        ]
+
+    return [
+        scan_target(
+            candidate.input,
+            candidate.url,
+            args,
+            providers_requested,
+            provider_names,
+            browser_session,
+        )
+        for candidate in candidates
+    ]
+
+
 def print_result(result: dict[str, Any], output: str, color: bool) -> None:
     print(format_result(result, output, color), flush=True)
     if output == "human":
@@ -404,20 +427,21 @@ def main(argv: list[str] | None = None) -> int:
         color = sys.stdout.isatty() and "NO_COLOR" not in os.environ
         if browser_session is not None:
             for target in targets:
-                result = scan_target(
+                results = scan_input(
                     target,
                     args,
                     providers_requested,
                     provider_names,
                     browser_session,
                 )
-                print_result(result, args.output, color)
+                for result in results:
+                    print_result(result, args.output, color)
             return 0
 
         with ThreadPoolExecutor(max_workers=args.concurrency) as executor:
             futures = [
                 executor.submit(
-                    scan_target,
+                    scan_input,
                     target,
                     args,
                     providers_requested,
@@ -427,7 +451,8 @@ def main(argv: list[str] | None = None) -> int:
                 for target in targets
             ]
             for future in as_completed(futures):
-                print_result(future.result(), args.output, color)
+                for result in future.result():
+                    print_result(result, args.output, color)
     finally:
         if browser_session is not None:
             browser_session.close()

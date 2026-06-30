@@ -5,7 +5,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from tech_scan.cli import scan_target
+from tech_scan.cli import scan_input, scan_target as scan_concrete_target
 from tech_scan.diagnostics import Diagnostics
 from tech_scan.models import FetchResult
 from tech_scan.sanity import SanityResult
@@ -29,6 +29,17 @@ def args_for(db, refresh=False, mode="requests", verbosity=0):
     )
 
 
+def scan_target(raw_target, args, providers_requested, provider_names, browser_session=None):
+    return scan_concrete_target(
+        raw_target,
+        f"https://{raw_target}",
+        args,
+        providers_requested,
+        provider_names,
+        browser_session,
+    )
+
+
 class CliCacheTests(unittest.TestCase):
     def setUp(self):
         self.sanity_patch = None
@@ -49,6 +60,72 @@ class CliCacheTests(unittest.TestCase):
             return_value=result,
         )
         self.sanity_mock = self.sanity_patch.start()
+
+    def test_scan_input_expands_bare_domain_to_http_and_https(self):
+        with TemporaryDirectory() as tmpdir:
+            db = Path(tmpdir) / "results.db"
+            fetches = [
+                FetchResult(
+                    input="example.com",
+                    url="http://example.com",
+                    final_url="http://example.com",
+                    status=200,
+                    headers={},
+                    cookies={},
+                    body="http",
+                    mode="requests",
+                ),
+                FetchResult(
+                    input="example.com",
+                    url="https://example.com",
+                    final_url="https://example.com",
+                    status=200,
+                    headers={},
+                    cookies={},
+                    body="https",
+                    mode="requests",
+                ),
+            ]
+
+            with patch("tech_scan.cli.fetch_requests", side_effect=fetches) as fetch_mock:
+                results = scan_input("example.com", args_for(db), ["builtin"], ["builtin"])
+
+        self.assertEqual([result["url"] for result in results], ["http://example.com", "https://example.com"])
+        self.assertEqual([call.args[1] for call in fetch_mock.call_args_list], ["http://example.com", "https://example.com"])
+
+    def test_scan_input_explicit_scheme_uses_single_concrete_target(self):
+        with TemporaryDirectory() as tmpdir:
+            db = Path(tmpdir) / "results.db"
+            fetch = FetchResult(
+                input="https://example.com",
+                url="https://example.com",
+                final_url="https://example.com",
+                status=200,
+                headers={},
+                cookies={},
+                body="https",
+                mode="requests",
+            )
+
+            with patch("tech_scan.cli.fetch_requests", return_value=fetch) as fetch_mock:
+                results = scan_input("https://example.com", args_for(db), ["builtin"], ["builtin"])
+
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["url"], "https://example.com")
+        self.assertEqual(fetch_mock.call_args.args[1], "https://example.com")
+
+    def test_scan_input_rejects_port_without_scheme(self):
+        with TemporaryDirectory() as tmpdir:
+            results = scan_input(
+                "example.com:8080",
+                args_for(Path(tmpdir) / "results.db"),
+                ["builtin"],
+                ["builtin"],
+            )
+
+        self.assertEqual(len(results), 1)
+        self.assertIsNone(results[0]["url"])
+        self.assertIn("scheme is required", results[0]["error"])
 
     def test_cached_fetch_is_reused_with_different_provider_set(self):
         with TemporaryDirectory() as tmpdir:
