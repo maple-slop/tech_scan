@@ -3,7 +3,6 @@ from .builtin import BuiltinProvider, Rule
 from .factory import build_providers
 from .merge import merge_findings
 from .wappalyzer_json import (
-    WappalyzerJsonProvider,
     WappalyzerPattern,
     parse_wappalyzer_pattern,
 )
@@ -14,7 +13,6 @@ __all__ = [
     "Provider",
     "Rule",
     "WappalyzerGoProvider",
-    "WappalyzerJsonProvider",
     "WappalyzerPattern",
     "build_providers",
     "merge_findings",

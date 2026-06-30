@@ -25,7 +25,6 @@ echo 'https://example.com' | uv run -m tech_scan --sanity-timeout 0.5
 echo 'https://example.com' | uv run -m tech_scan --proxy http://127.0.0.1:8080 --ca-bundle ~/.mitmproxy/mitmproxy-ca-cert.pem
 echo 'https://example.com' | uv run -m tech_scan --proxy socks5h://127.0.0.1:1080 --insecure
 uv run -m tech_scan --provider wappalyzergo < domains.txt
-uv run -m tech_scan --provider wappalyzer_json --wappalyzer-data fingerprints_data.json < domains.txt
 ```
 
 Fetch modes:
@@ -106,7 +105,7 @@ Keep builtin rules conservative and evidence-driven. Each finding should include
 - `confidence`
 - `evidence`
 
-`wappalyzergo` uses vendored `projectdiscovery/wappalyzergo` fingerprint JSON and must not shell out to subprocess wrappers. Keep the vendored upstream license and attribution beside the data. `wappalyzer_json` remains available for explicit user-supplied datasets via `--wappalyzer-data` or `WAPPALYZER_DATA`.
+`wappalyzergo` uses vendored `projectdiscovery/wappalyzergo` fingerprint JSON and must not shell out to subprocess wrappers. Keep the vendored upstream license and attribution beside the data. Do not expose user-supplied Wappalyzer JSON as a selectable provider; public provider choices are only `builtin`, `wappalyzergo`, and `all`.
 
 uBlock Origin Lite is vendored under fetcher data for browser mode. Keep its upstream license and attribution beside the extension files, and include it in package-data checks when packaging behavior changes.
 

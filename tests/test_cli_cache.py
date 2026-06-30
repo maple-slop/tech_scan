@@ -1,6 +1,5 @@
 import argparse
 import io
-import json
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -12,7 +11,7 @@ from tech_scan.models import FetchResult
 from tech_scan.sanity import SanityResult
 
 
-def args_for(db, provider_data=None, refresh=False, mode="requests", verbosity=0):
+def args_for(db, refresh=False, mode="requests", verbosity=0):
     return argparse.Namespace(
         db=db,
         mode=mode,
@@ -27,7 +26,6 @@ def args_for(db, provider_data=None, refresh=False, mode="requests", verbosity=0
         ca_bundle=None,
         insecure=False,
         no_browser_extension=False,
-        wappalyzer_data=provider_data,
     )
 
 
@@ -55,11 +53,6 @@ class CliCacheTests(unittest.TestCase):
     def test_cached_fetch_is_reused_with_different_provider_set(self):
         with TemporaryDirectory() as tmpdir:
             db = Path(tmpdir) / "results.db"
-            data_path = Path(tmpdir) / "fingerprints_data.json"
-            data_path.write_text(
-                json.dumps({"apps": {"Apache": {"cats": [22], "headers": {"server": "Apache"}}}}),
-                encoding="utf-8",
-            )
             fetch = FetchResult(
                 input="example.com",
                 url="https://example.com",
@@ -75,15 +68,15 @@ class CliCacheTests(unittest.TestCase):
                 first = scan_target("example.com", args_for(db), ["builtin"], ["builtin"])
                 second = scan_target(
                     "example.com",
-                    args_for(db, data_path),
-                    ["wappalyzer_json"],
-                    ["wappalyzer_json"],
+                    args_for(db),
+                    ["all"],
+                    ["builtin", "wappalyzergo"],
                 )
 
             self.assertFalse(first["cached"])
             self.assertTrue(second["cached"])
             self.assertEqual(fetch_mock.call_count, 1)
-            self.assertEqual(second["technologies"][0]["provider"], "wappalyzer_json")
+            self.assertEqual(second["providers"], ["builtin", "wappalyzergo"])
 
     def test_refresh_forces_new_fetch_write(self):
         with TemporaryDirectory() as tmpdir:

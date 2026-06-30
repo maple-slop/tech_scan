@@ -133,6 +133,19 @@ class OutputTests(unittest.TestCase):
         self.assertEqual(raised.exception.code, 2)
         self.assertIn("unrecognized arguments: --wappalyzergo-cmd", stderr.getvalue())
 
+    def test_wappalyzer_json_provider_flags_are_removed(self):
+        for args in [
+            ["--provider", "wappalyzer_json"],
+            ["--wappalyzer-data", "fingerprints_data.json"],
+        ]:
+            with self.subTest(args=args):
+                stderr = io.StringIO()
+                with patch("sys.stderr", stderr):
+                    with self.assertRaises(SystemExit) as raised:
+                        parse_args(args)
+
+                self.assertEqual(raised.exception.code, 2)
+
     def test_no_browser_extension_flag(self):
         self.assertTrue(parse_args([]).no_browser_extension is False)
         self.assertTrue(parse_args(["--no-browser-extension"]).no_browser_extension)

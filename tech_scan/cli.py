@@ -76,7 +76,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "tech-scan --provider all < domains.txt"
         ),
     )
-    wappalyzer_data_env = os.environ.get("WAPPALYZER_DATA")
     parser.add_argument(
         "--db",
         type=Path,
@@ -179,22 +178,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--provider",
         action="append",
-        choices=["builtin", "wappalyzergo", "wappalyzer_json", "all"],
+        choices=["builtin", "wappalyzergo", "all"],
         default=None,
         help=(
             "Detection provider. Repeatable. builtin is curated local rules; "
             "wappalyzergo uses vendored projectdiscovery/wappalyzergo fingerprints; "
-            "wappalyzer_json uses an explicit fingerprints_data.json; "
-            "all enables builtin and wappalyzergo plus configured optional providers. Default: builtin."
-        ),
-    )
-    parser.add_argument(
-        "--wappalyzer-data",
-        type=Path,
-        default=Path(wappalyzer_data_env) if wappalyzer_data_env else None,
-        help=(
-            "Path to Wappalyzer fingerprints_data.json for the Python-native wappalyzer_json provider. "
-            "Can also be set with WAPPALYZER_DATA."
+            "all enables builtin and wappalyzergo. Default: builtin."
         ),
     )
     return parser.parse_args(argv)
@@ -202,13 +191,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 def resolve_provider_names(
     requested: list[str],
-    wappalyzer_data: Path | str | None = None,
 ) -> list[str]:
     if "all" in requested:
-        names = {"builtin", "wappalyzergo"}
-        if wappalyzer_data:
-            names.add("wappalyzer_json")
-        return sorted(names)
+        return ["builtin", "wappalyzergo"]
     return sorted(set(requested))
 
 
@@ -234,7 +219,7 @@ def scan_target(
             "error": str(exc),
         }
 
-    providers = build_providers(providers_requested, args.wappalyzer_data)
+    providers = build_providers(providers_requested)
     findings = []
     fetch: FetchResult | None = None
     diagnostics = getattr(args, "_diagnostics", None) or Diagnostics(getattr(args, "verbosity", 0))
@@ -389,21 +374,7 @@ def main(argv: list[str] | None = None) -> int:
     providers_requested = args.provider or ["builtin"]
     provider_names = resolve_provider_names(
         providers_requested,
-        args.wappalyzer_data,
     )
-    if (
-        "wappalyzer_json" in providers_requested
-        and "all" not in providers_requested
-        and not args.wappalyzer_data
-    ):
-        print(
-            "error: --provider wappalyzer_json requires --wappalyzer-data or WAPPALYZER_DATA",
-            file=sys.stderr,
-        )
-        return 2
-    if args.wappalyzer_data and not args.wappalyzer_data.exists():
-        print(f"error: --wappalyzer-data does not exist: {args.wappalyzer_data}", file=sys.stderr)
-        return 2
     if args.concurrency < 1:
         print("error: --concurrency must be >= 1", file=sys.stderr)
         return 2

@@ -1,15 +1,11 @@
 import unittest
-from pathlib import Path
-from tempfile import TemporaryDirectory
 from unittest.mock import patch
-import json
 import subprocess
 
 from tech_scan.models import FetchResult, ResourceObservation
 from tech_scan.providers import (
     BuiltinProvider,
     WappalyzerGoProvider,
-    WappalyzerJsonProvider,
     build_providers,
     merge_findings,
     parse_wappalyzer_pattern,
@@ -257,98 +253,80 @@ class ProviderTests(unittest.TestCase):
         forms_marker = next(finding for finding in web_forms if finding.name == "ASP.NET Web Forms")
         self.assertLess(aspnet_suffix.confidence, forms_marker.confidence)
 
-    def test_wappalyzer_json_provider_matches_supported_fields_and_implies(self):
-        with TemporaryDirectory() as tmpdir:
-            data_path = Path(tmpdir) / "fingerprints_data.json"
-            data_path.write_text(
-                json.dumps(
-                    {
-                        "apps": {
-                            "Express": {
-                                "cats": [18],
-                                "headers": {"x-powered-by": "Express\\;confidence:90"},
-                                "implies": ["Node.js\\;confidence:70"],
-                            },
-                            "Node.js": {"cats": [27]},
-                            "React": {"cats": [12], "scriptSrc": ["react(?:\\.min)?\\.js"]},
-                            "Cloudflare": {"cats": [31], "headers": {"server": "cloudflare"}},
-                            "Apache": {"cats": [22], "html": "Apache Server at"},
-                            "Laravel": {
-                                "cats": [18],
-                                "cookies": {"laravel_session": ""},
-                                "meta": {"csrf-token": ""},
-                            },
-                            "Stripe": {"cats": ["Payment processors"], "html": "stripe"},
-                        }
-                    }
-                ),
-                encoding="utf-8",
-            )
-            provider = WappalyzerJsonProvider(data_path)
-            fetch = make_fetch(
-                headers={"Server": "cloudflare", "X-Powered-By": "Express"},
-                cookies={"laravel_session": "abc"},
-                body=(
-                    '<meta name="csrf-token" content="abc">'
-                    '<script src="/assets/react.min.js"></script>'
-                    "Apache Server at example stripe"
-                ),
-            )
+    def test_wappalyzergo_provider_matches_supported_fields_and_implies(self):
+        provider = WappalyzerGoProvider(
+            {
+                "apps": {
+                    "Express": {
+                        "cats": [18],
+                        "headers": {"x-powered-by": "Express\\;confidence:90"},
+                        "implies": ["Node.js\\;confidence:70"],
+                    },
+                    "Node.js": {"cats": [27]},
+                    "React": {"cats": [12], "scriptSrc": ["react(?:\\.min)?\\.js"]},
+                    "Cloudflare": {"cats": [31], "headers": {"server": "cloudflare"}},
+                    "Apache": {"cats": [22], "html": "Apache Server at"},
+                    "Laravel": {
+                        "cats": [18],
+                        "cookies": {"laravel_session": ""},
+                        "meta": {"csrf-token": ""},
+                    },
+                    "Stripe": {"cats": ["Payment processors"], "html": "stripe"},
+                }
+            }
+        )
+        fetch = make_fetch(
+            headers={"Server": "cloudflare", "X-Powered-By": "Express"},
+            cookies={"laravel_session": "abc"},
+            body=(
+                '<meta name="csrf-token" content="abc">'
+                '<script src="/assets/react.min.js"></script>'
+                "Apache Server at example stripe"
+            ),
+        )
 
-            detected = provider.detect(fetch)
-            by_name = {finding.name: finding for finding in detected}
+        detected = provider.detect(fetch)
+        by_name = {finding.name: finding for finding in detected}
 
-            self.assertLessEqual(
-                {"Express", "Node.js", "React", "Cloudflare", "Apache", "Laravel"},
-                set(by_name),
-            )
-            self.assertNotIn("Stripe", by_name)
-            self.assertEqual(by_name["Express"].confidence, 90)
-            self.assertEqual(by_name["Node.js"].confidence, 70)
-            self.assertIn("wappalyzer header: x-powered-by", by_name["Express"].evidence)
-            self.assertIn("wappalyzer implied by: Express", by_name["Node.js"].evidence)
-            self.assertIn("wappalyzer scriptSrc", by_name["React"].evidence)
-            self.assertIn("wappalyzer meta: csrf-token", by_name["Laravel"].evidence)
+        self.assertLessEqual(
+            {"Express", "Node.js", "React", "Cloudflare", "Apache", "Laravel"},
+            set(by_name),
+        )
+        self.assertNotIn("Stripe", by_name)
+        self.assertEqual(by_name["Express"].confidence, 90)
+        self.assertEqual(by_name["Node.js"].confidence, 70)
+        self.assertIn("wappalyzer header: x-powered-by", by_name["Express"].evidence)
+        self.assertIn("wappalyzer implied by: Express", by_name["Node.js"].evidence)
+        self.assertIn("wappalyzer scriptSrc", by_name["React"].evidence)
+        self.assertIn("wappalyzer meta: csrf-token", by_name["Laravel"].evidence)
 
-    def test_wappalyzer_json_provider_uses_categories_data_names(self):
-        with TemporaryDirectory() as tmpdir:
-            data_path = Path(tmpdir) / "fingerprints_data.json"
-            data_path.write_text(
-                json.dumps(
-                    {
-                        "categories": {
-                            "999": {"name": "Web frameworks"},
-                            "998": {"name": "Analytics"},
-                        },
-                        "apps": {
-                            "Custom Framework": {"cats": ["999"], "html": "custom-framework"},
-                            "Analytics Tool": {"cats": ["998"], "html": "analytics-tool"},
-                        },
-                    }
-                ),
-                encoding="utf-8",
-            )
-            provider = WappalyzerJsonProvider(data_path)
-            detected = provider.detect(make_fetch(body="custom-framework analytics-tool"))
+    def test_wappalyzergo_provider_uses_categories_data_names(self):
+        provider = WappalyzerGoProvider(
+            {
+                "categories": {
+                    "999": {"name": "Web frameworks"},
+                    "998": {"name": "Analytics"},
+                },
+                "apps": {
+                    "Custom Framework": {"cats": ["999"], "html": "custom-framework"},
+                    "Analytics Tool": {"cats": ["998"], "html": "analytics-tool"},
+                },
+            }
+        )
+        detected = provider.detect(make_fetch(body="custom-framework analytics-tool"))
 
-            self.assertEqual(names(detected), {"Custom Framework"})
+        self.assertEqual(names(detected), {"Custom Framework"})
 
-    def test_wappalyzer_json_merges_with_builtin(self):
+    def test_wappalyzergo_merges_with_builtin(self):
         builtin = BuiltinProvider().detect(make_fetch(headers={"Server": "Apache"}))
-        with TemporaryDirectory() as tmpdir:
-            data_path = Path(tmpdir) / "fingerprints_data.json"
-            data_path.write_text(
-                json.dumps({"apps": {"Apache": {"cats": [22], "headers": {"server": "Apache"}}}}),
-                encoding="utf-8",
-            )
-            wappalyzer = WappalyzerJsonProvider(data_path).detect(
-                make_fetch(headers={"Server": "Apache"})
-            )
+        wappalyzer = WappalyzerGoProvider(
+            {"apps": {"Apache": {"cats": [22], "headers": {"server": "Apache"}}}}
+        ).detect(make_fetch(headers={"Server": "Apache"}))
 
         merged = merge_findings([*builtin, *wappalyzer])
 
         apache = next(finding for finding in merged if finding.name == "Apache")
-        self.assertEqual(apache.provider, "builtin,wappalyzer_json")
+        self.assertEqual(apache.provider, "builtin,wappalyzergo")
 
 
 if __name__ == "__main__":
