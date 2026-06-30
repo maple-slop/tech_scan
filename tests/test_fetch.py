@@ -23,7 +23,7 @@ from tech_scan.fetchers.browser import (
     ubol_extension_path,
 )
 from tech_scan.fetchers.requests import fetch_requests
-from tech_scan.html_extract import extract_meta, extract_script_srcs, extract_url_attrs
+from tech_scan.html_extract import extract_attrs, extract_meta, extract_script_srcs, extract_url_attrs
 from tech_scan.models import FetchResult
 from tech_scan.url_policy import redirect_target, same_hostname
 
@@ -250,6 +250,26 @@ class FetchTests(unittest.TestCase):
             extract_url_attrs(body),
             ["/app.js", "/admin", "/save", "/alternate"],
         )
+
+    def test_shared_html_extractors_use_html_parser_attributes(self):
+        body = (
+            '<meta property="og:title" content="Title">'
+            '<meta http-equiv=refresh content="0;url=/login">'
+            '<script src=/bare.js defer></script>'
+            '<a HREF="/mixed-case"></a>'
+        )
+
+        self.assertEqual(extract_attrs('src=/bare.js defer data-Foo="Bar"'), {
+            "src": "/bare.js",
+            "defer": "",
+            "data-foo": "Bar",
+        })
+        self.assertEqual(extract_script_srcs(body), ["/bare.js"])
+        self.assertEqual(extract_meta(body), {
+            "og:title": ["Title"],
+            "refresh": ["0;url=/login"],
+        })
+        self.assertEqual(extract_url_attrs(body), ["/bare.js", "/mixed-case"])
 
     def test_requests_follow_same_host_redirect(self):
         session = FakeSession(
