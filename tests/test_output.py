@@ -7,7 +7,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from tech_scan.cli import main
+from tech_scan.cli import main, parse_args
 from tech_scan.output import (
     confidence_color,
     evidence_color,
@@ -71,6 +71,52 @@ class OutputTests(unittest.TestCase):
         result["technologies"] = []
 
         self.assertIn("technologies: none", format_human(result, color=False))
+
+    def test_ca_bundle_defaults_from_known_environment_variables(self):
+        with patch.dict(
+            "os.environ",
+            {
+                "REQUESTS_CA_BUNDLE": "/tmp/requests-ca.pem",
+                "CURL_CA_BUNDLE": "/tmp/curl-ca.pem",
+                "SSL_CERT_FILE": "/tmp/ssl-ca.pem",
+            },
+            clear=True,
+        ):
+            self.assertEqual(str(parse_args([]).ca_bundle), "/tmp/requests-ca.pem")
+
+        with patch.dict(
+            "os.environ",
+            {"CURL_CA_BUNDLE": "/tmp/curl-ca.pem", "SSL_CERT_FILE": "/tmp/ssl-ca.pem"},
+            clear=True,
+        ):
+            self.assertEqual(str(parse_args([]).ca_bundle), "/tmp/curl-ca.pem")
+
+        with patch.dict("os.environ", {"SSL_CERT_FILE": "/tmp/ssl-ca.pem"}, clear=True):
+            self.assertEqual(str(parse_args([]).ca_bundle), "/tmp/ssl-ca.pem")
+
+    def test_main_rejects_conflicting_tls_options(self):
+        with TemporaryDirectory() as tmpdir:
+            ca_bundle = Path(tmpdir) / "ca.pem"
+            ca_bundle.write_text("ca", encoding="utf-8")
+            args = ["--ca-bundle", str(ca_bundle), "--insecure"]
+
+            stderr = io.StringIO()
+            with patch("sys.stdin", io.StringIO("")):
+                with patch("sys.stderr", stderr):
+                    self.assertEqual(main(args), 2)
+
+        self.assertIn("cannot be used", stderr.getvalue())
+
+    def test_main_rejects_missing_ca_bundle(self):
+        with TemporaryDirectory() as tmpdir:
+            args = ["--ca-bundle", str(Path(tmpdir) / "missing.pem")]
+
+            stderr = io.StringIO()
+            with patch("sys.stdin", io.StringIO("")):
+                with patch("sys.stderr", stderr):
+                    self.assertEqual(main(args), 2)
+
+        self.assertIn("does not exist", stderr.getvalue())
 
     def test_main_human_output_separates_entries_with_blank_line(self):
         with TemporaryDirectory() as tmpdir:
@@ -147,8 +193,10 @@ class OutputTests(unittest.TestCase):
         sessions = []
 
         class FakeBrowserSession:
-            def __init__(self, proxy):
+            def __init__(self, proxy, ignore_https_errors=False, ca_bundle=None):
                 self.proxy = proxy
+                self.ignore_https_errors = ignore_https_errors
+                self.ca_bundle = ca_bundle
                 self.closed = False
                 sessions.append(self)
 

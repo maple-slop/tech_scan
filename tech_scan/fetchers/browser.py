@@ -20,8 +20,15 @@ def chromium_executable_path() -> str | None:
 
 
 class BrowserSession:
-    def __init__(self, proxy: str | None):
+    def __init__(
+        self,
+        proxy: str | None,
+        ignore_https_errors: bool = False,
+        ca_bundle: str | None = None,
+    ):
         self.proxy = proxy
+        self.ignore_https_errors = ignore_https_errors
+        self.ca_bundle = ca_bundle
         self._playwright = None
         self._browser = None
         self._startup_error: str | None = None
@@ -42,6 +49,12 @@ class BrowserSession:
             launch_args["executable_path"] = executable_path
         if self.proxy:
             launch_args["proxy"] = {"server": self.proxy}
+        if self.ca_bundle:
+            env = dict(os.environ)
+            env["SSL_CERT_FILE"] = self.ca_bundle
+            env["REQUESTS_CA_BUNDLE"] = self.ca_bundle
+            env["CURL_CA_BUNDLE"] = self.ca_bundle
+            launch_args["env"] = env
 
         try:
             self._playwright = sync_playwright().start()
@@ -72,7 +85,10 @@ class BrowserSession:
             context = None
             page = None
             try:
-                context = browser.new_context(extra_http_headers=BROWSER_HEADERS)
+                context_args: dict[str, object] = {"extra_http_headers": BROWSER_HEADERS}
+                if self.ignore_https_errors:
+                    context_args["ignore_https_errors"] = True
+                context = browser.new_context(**context_args)
                 page = context.new_page()
 
                 def limit_main_frame_redirects(route: object, request: object) -> None:
@@ -159,8 +175,10 @@ def fetch_browser(
     timeout: float,
     proxy: str | None,
     browser_session: BrowserSession | None = None,
+    ignore_https_errors: bool = False,
+    ca_bundle: str | None = None,
 ) -> FetchResult:
     if browser_session is not None:
         return browser_session.fetch(target_input, url, timeout)
-    with BrowserSession(proxy) as session:
+    with BrowserSession(proxy, ignore_https_errors, ca_bundle) as session:
         return session.fetch(target_input, url, timeout)

@@ -41,10 +41,17 @@ def is_redirect_status(status_code: int) -> bool:
 
 
 def fetch_requests(
-    target_input: str, url: str, timeout: float, proxy: str | None
+    target_input: str,
+    url: str,
+    timeout: float,
+    proxy: str | None,
+    verify: bool | str | None = None,
 ) -> FetchResult:
     proxies = {"http": proxy, "https": proxy} if proxy else None
     session = requests.Session()
+    request_kwargs = {}
+    if verify is not None:
+        request_kwargs["verify"] = verify
 
     last_error: str | None = None
     for candidate in [url, http_fallback_url(url)]:
@@ -60,6 +67,7 @@ def fetch_requests(
                     timeout=timeout,
                     proxies=proxies,
                     allow_redirects=False,
+                    **request_kwargs,
                 )
                 next_url = redirect_target(current_url, response.headers.get("location"))
                 if not is_redirect_status(response.status_code) or not next_url:

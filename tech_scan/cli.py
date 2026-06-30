@@ -15,6 +15,30 @@ from .output import format_result
 from .providers import build_providers, merge_findings
 
 
+def ca_bundle_env_default() -> Path | None:
+    for name in ["REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE", "SSL_CERT_FILE"]:
+        value = os.environ.get(name)
+        if value:
+            return Path(value).expanduser()
+    return None
+
+
+def tls_identity(ca_bundle: Path | None, insecure: bool) -> str:
+    if insecure:
+        return "insecure"
+    if ca_bundle:
+        return f"ca:{ca_bundle.expanduser().resolve()}"
+    return "default"
+
+
+def requests_verify(ca_bundle: Path | None, insecure: bool) -> bool | str | None:
+    if insecure:
+        return False
+    if ca_bundle:
+        return str(ca_bundle.expanduser().resolve())
+    return None
+
+
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
@@ -53,6 +77,21 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "Proxy URL for fetching, for example http://127.0.0.1:8080 or socks5://127.0.0.1:9050. "
             "Proxy is part of the response-cache key."
         ),
+    )
+    parser.add_argument(
+        "--ca-bundle",
+        type=Path,
+        default=ca_bundle_env_default(),
+        help=(
+            "CA bundle path for proxied/TLS fetching. Defaults from REQUESTS_CA_BUNDLE, "
+            "then CURL_CA_BUNDLE, then SSL_CERT_FILE. Requests mode uses this directly; "
+            "browser mode passes it to Chromium as best-effort environment."
+        ),
+    )
+    parser.add_argument(
+        "--insecure",
+        action="store_true",
+        help="Disable TLS certificate verification. Useful for intercepting proxies such as mitmproxy.",
     )
     parser.add_argument(
         "--timeout",
@@ -164,7 +203,13 @@ def scan_target(
     with ResponseCache(args.db) as cache:
         def cached_or_fetch(mode: str) -> FetchResult:
             if not args.refresh:
-                cached_fetch = cache.get(target, mode, args.proxy, args.cache_ttl)
+                cached_fetch = cache.get(
+                    target,
+                    mode,
+                    args.proxy,
+                    args.cache_ttl,
+                    tls_identity(args.ca_bundle, args.insecure),
+                )
                 if cached_fetch:
                     return cached_fetch
             if mode == "browser":
@@ -174,10 +219,24 @@ def scan_target(
                     args.timeout,
                     args.proxy,
                     browser_session,
+                    args.insecure,
+                    str(args.ca_bundle.expanduser().resolve()) if args.ca_bundle else None,
                 )
             else:
-                fresh_fetch = fetch_requests(raw_target, target, args.timeout, args.proxy)
-            cache.set(target, mode, args.proxy, fresh_fetch)
+                fresh_fetch = fetch_requests(
+                    raw_target,
+                    target,
+                    args.timeout,
+                    args.proxy,
+                    requests_verify(args.ca_bundle, args.insecure),
+                )
+            cache.set(
+                target,
+                mode,
+                args.proxy,
+                fresh_fetch,
+                tls_identity(args.ca_bundle, args.insecure),
+            )
             return fresh_fetch
 
         if args.mode in {"requests", "auto"}:
@@ -252,9 +311,25 @@ def main(argv: list[str] | None = None) -> int:
     if args.concurrency < 1:
         print("error: --concurrency must be >= 1", file=sys.stderr)
         return 2
+    if args.ca_bundle and args.insecure:
+        print("error: --ca-bundle cannot be used with --insecure", file=sys.stderr)
+        return 2
+    if args.ca_bundle:
+        args.ca_bundle = args.ca_bundle.expanduser()
+        if not args.ca_bundle.exists():
+            print(f"error: --ca-bundle does not exist: {args.ca_bundle}", file=sys.stderr)
+            return 2
 
     targets = [line.strip() for line in sys.stdin if line.strip()]
-    browser_session = BrowserSession(args.proxy) if args.mode in {"browser", "auto"} else None
+    browser_session = (
+        BrowserSession(
+            args.proxy,
+            ignore_https_errors=args.insecure,
+            ca_bundle=str(args.ca_bundle.resolve()) if args.ca_bundle else None,
+        )
+        if args.mode in {"browser", "auto"}
+        else None
+    )
     try:
         color = sys.stdout.isatty() and "NO_COLOR" not in os.environ
         if browser_session is not None:

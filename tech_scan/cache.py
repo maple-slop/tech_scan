@@ -9,7 +9,7 @@ from pathlib import Path
 from .models import FetchResult
 
 
-FETCH_PROFILE_VERSION = "v2"
+FETCH_PROFILE_VERSION = "v3"
 
 
 def default_db_path() -> Path:
@@ -58,11 +58,18 @@ class ResponseCache:
         self.close()
 
     @staticmethod
-    def key(target: str, mode: str, proxy: str | None) -> str:
-        return "|".join([target, mode, proxy or "", FETCH_PROFILE_VERSION])
+    def key(target: str, mode: str, proxy: str | None, tls_identity: str | None = None) -> str:
+        return "|".join([target, mode, proxy or "", tls_identity or "", FETCH_PROFILE_VERSION])
 
-    def get(self, target: str, mode: str, proxy: str | None, ttl: int) -> FetchResult | None:
-        key = self.key(target, mode, proxy)
+    def get(
+        self,
+        target: str,
+        mode: str,
+        proxy: str | None,
+        ttl: int,
+        tls_identity: str | None = None,
+    ) -> FetchResult | None:
+        key = self.key(target, mode, proxy, tls_identity)
         row = self.conn.execute(
             """
             SELECT
@@ -106,9 +113,16 @@ class ResponseCache:
             cached=True,
         )
 
-    def set(self, target: str, mode: str, proxy: str | None, fetch: FetchResult) -> None:
+    def set(
+        self,
+        target: str,
+        mode: str,
+        proxy: str | None,
+        fetch: FetchResult,
+        tls_identity: str | None = None,
+    ) -> None:
         now = int(time.time())
-        key = self.key(target, mode, proxy)
+        key = self.key(target, mode, proxy, tls_identity)
         self.conn.execute(
             """
             INSERT INTO fetch_observations (

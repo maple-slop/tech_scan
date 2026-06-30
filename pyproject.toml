@@ -9,7 +9,7 @@ description = "Bug bounty oriented website technology detector"
 requires-python = ">=3.10"
 dependencies = [
     "playwright>=1.40",
-    "requests>=2.31",
+    "requests[socks]>=2.31",
 ]
 
 [project.scripts]

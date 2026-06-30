@@ -1,7 +1,13 @@
+import shutil
+import socket
+import socketserver
+import subprocess
+import sys
+import threading
+import time
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
-import sys
 
 from tech_scan.fetchers import (
     BrowserSession,
@@ -27,9 +33,11 @@ class FakeSession:
     def __init__(self, responses):
         self.responses = list(responses)
         self.urls = []
+        self.kwargs = []
 
     def get(self, url, **kwargs):
         self.urls.append(url)
+        self.kwargs.append(kwargs)
         return self.responses.pop(0)
 
 
@@ -165,6 +173,151 @@ class FetchTests(unittest.TestCase):
         self.assertEqual(result.status, 200)
         self.assertEqual(result.headers, {"server": "Apache"})
 
+    def test_requests_passes_proxy_and_tls_options(self):
+        session = FakeSession([FakeResponse("https://example.com", 200, {}, "ok")])
+
+        with patch("tech_scan.fetchers.requests.requests.Session", return_value=session):
+            fetch_requests(
+                "example.com",
+                "https://example.com",
+                5,
+                "socks5h://127.0.0.1:1080",
+                "/tmp/ca.pem",
+            )
+
+        self.assertEqual(
+            session.kwargs[0]["proxies"],
+            {
+                "http": "socks5h://127.0.0.1:1080",
+                "https": "socks5h://127.0.0.1:1080",
+            },
+        )
+        self.assertEqual(session.kwargs[0]["verify"], "/tmp/ca.pem")
+
+    def test_requests_insecure_disables_tls_verification(self):
+        session = FakeSession([FakeResponse("https://example.com", 200, {}, "ok")])
+
+        with patch("tech_scan.fetchers.requests.requests.Session", return_value=session):
+            fetch_requests("example.com", "https://example.com", 5, "http://proxy:8080", False)
+
+        self.assertEqual(
+            session.kwargs[0]["proxies"],
+            {"http": "http://proxy:8080", "https": "http://proxy:8080"},
+        )
+        self.assertIs(session.kwargs[0]["verify"], False)
+
+    def test_requests_uses_http_proxy_for_http_target(self):
+        received = []
+
+        class ProxyHandler(socketserver.BaseRequestHandler):
+            def handle(self):
+                data = self.request.recv(4096)
+                received.append(data.decode("iso-8859-1"))
+                self.request.sendall(
+                    b"HTTP/1.1 200 OK\r\n"
+                    b"Content-Type: text/html\r\n"
+                    b"Content-Length: 2\r\n"
+                    b"Connection: close\r\n"
+                    b"\r\nok"
+                )
+
+        try:
+            server = socketserver.TCPServer(("127.0.0.1", 0), ProxyHandler)
+        except PermissionError:
+            self.skipTest("local sockets are not permitted in this sandbox")
+        with server:
+            thread = threading.Thread(target=server.handle_request)
+            thread.start()
+            result = fetch_requests(
+                "example.test",
+                "http://example.test/",
+                5,
+                f"http://127.0.0.1:{server.server_address[1]}",
+            )
+            thread.join(timeout=5)
+
+        self.assertEqual(result.status, 200)
+        self.assertTrue(received)
+        self.assertIn("GET http://example.test/ HTTP/1.1", received[0])
+
+    def test_requests_can_use_mitmproxy_socks_proxy_when_available(self):
+        if shutil.which("mitmdump") is None:
+            self.skipTest("mitmdump is not installed")
+        try:
+            import socks  # noqa: F401
+        except ImportError:
+            self.skipTest("requests SOCKS support is not installed")
+
+        origin_received = []
+
+        class OriginHandler(socketserver.BaseRequestHandler):
+            def handle(self):
+                data = self.request.recv(4096)
+                origin_received.append(data.decode("iso-8859-1"))
+                self.request.sendall(
+                    b"HTTP/1.1 200 OK\r\n"
+                    b"Content-Length: 2\r\n"
+                    b"Connection: close\r\n"
+                    b"\r\nok"
+                )
+
+        try:
+            with socket.socket() as sock:
+                sock.bind(("127.0.0.1", 0))
+                proxy_port = sock.getsockname()[1]
+        except PermissionError:
+            self.skipTest("local sockets are not permitted in this sandbox")
+
+        try:
+            origin = socketserver.TCPServer(("127.0.0.1", 0), OriginHandler)
+        except PermissionError:
+            self.skipTest("local sockets are not permitted in this sandbox")
+        with origin:
+            origin_thread = threading.Thread(target=origin.handle_request)
+            origin_thread.start()
+            proc = subprocess.Popen(
+                [
+                    "mitmdump",
+                    "--mode",
+                    "socks5",
+                    "--listen-host",
+                    "127.0.0.1",
+                    "--listen-port",
+                    str(proxy_port),
+                    "--set",
+                    "termlog_verbosity=error",
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            try:
+                deadline = time.time() + 10
+                while time.time() < deadline:
+                    with socket.socket() as probe:
+                        if probe.connect_ex(("127.0.0.1", proxy_port)) == 0:
+                            break
+                    time.sleep(0.1)
+                else:
+                    self.skipTest("mitmdump did not start")
+
+                result = fetch_requests(
+                    "local",
+                    f"http://127.0.0.1:{origin.server_address[1]}/",
+                    5,
+                    f"socks5h://127.0.0.1:{proxy_port}",
+                )
+                origin_thread.join(timeout=5)
+            finally:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+
+        self.assertEqual(result.status, 200)
+        self.assertTrue(origin_received)
+        self.assertIn("GET / HTTP/1.1", origin_received[0])
+
     def test_requests_stop_before_cross_host_redirect(self):
         session = FakeSession(
             [
@@ -222,6 +375,24 @@ class FetchTests(unittest.TestCase):
         self.assertEqual(second.script_srcs, ["https://example.com/app.js"])
         self.assertTrue(playwright.chromium.browser.closed)
         self.assertTrue(playwright.stopped)
+
+    def test_browser_session_applies_tls_options(self):
+        playwright = FakePlaywright()
+        with install_fake_playwright(playwright):
+            session = BrowserSession(
+                proxy=None,
+                ignore_https_errors=True,
+                ca_bundle="/tmp/mitmproxy-ca.pem",
+            )
+            session.fetch("example.com", "https://example.com", 5)
+            session.close()
+
+        launch_env = playwright.chromium.launch_args[0]["env"]
+        self.assertEqual(launch_env["SSL_CERT_FILE"], "/tmp/mitmproxy-ca.pem")
+        self.assertEqual(launch_env["REQUESTS_CA_BUNDLE"], "/tmp/mitmproxy-ca.pem")
+        self.assertEqual(launch_env["CURL_CA_BUNDLE"], "/tmp/mitmproxy-ca.pem")
+        context_kwargs = playwright.chromium.browser.contexts[0][1]
+        self.assertTrue(context_kwargs["ignore_https_errors"])
 
     def test_auto_does_not_retry_small_static_html(self):
         fetch = FetchResult(

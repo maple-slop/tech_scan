@@ -81,6 +81,36 @@ class CacheTests(unittest.TestCase):
                     cache.get("https://example.com", "requests", "http://proxy:8080", 86400)
                 )
 
+    def test_tls_identity_isolates_cache_rows(self):
+        with TemporaryDirectory() as tmpdir:
+            with ResponseCache(Path(tmpdir) / "results.db") as cache:
+                cache.set(
+                    "https://example.com",
+                    "requests",
+                    "http://proxy:8080",
+                    make_fetch(),
+                    "ca:/tmp/ca.pem",
+                )
+
+                self.assertIsNone(
+                    cache.get(
+                        "https://example.com",
+                        "requests",
+                        "http://proxy:8080",
+                        86400,
+                        "insecure",
+                    )
+                )
+                self.assertIsNotNone(
+                    cache.get(
+                        "https://example.com",
+                        "requests",
+                        "http://proxy:8080",
+                        86400,
+                        "ca:/tmp/ca.pem",
+                    )
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

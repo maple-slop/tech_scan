@@ -20,6 +20,8 @@ Common commands:
 echo 'https://example.com' | uv run -m tech_scan
 echo 'https://example.com' | uv run -m tech_scan --mode requests --output jsonl
 echo 'https://example.com' | CHROMIUM_PATH=/usr/bin/chromium uv run -m tech_scan --mode browser
+echo 'https://example.com' | uv run -m tech_scan --proxy http://127.0.0.1:8080 --ca-bundle ~/.mitmproxy/mitmproxy-ca-cert.pem
+echo 'https://example.com' | uv run -m tech_scan --proxy socks5h://127.0.0.1:1080 --insecure
 uv run -m tech_scan --provider wappalyzer_json --wappalyzer-data fingerprints_data.json < domains.txt
 ```
 
@@ -55,6 +57,7 @@ Cache keys should depend on fetch identity:
 - normalized target
 - fetch mode
 - proxy identity
+- TLS trust identity (`--ca-bundle` or `--insecure`)
 - fetch profile version
 
 Do not key cache rows by provider set.
@@ -62,6 +65,13 @@ Do not key cache rows by provider set.
 Redirects must stay on the same hostname. This prevents an app that redirects to a third-party SSO provider from being reported as the third-party site.
 
 Browser mode uses one shared Playwright Chromium browser per scan run and separate browser contexts/pages per target. Keep Playwright sync API lifecycle on one thread. Use `CHROMIUM_PATH` when set, otherwise `/usr/bin/chromium` when executable, otherwise Playwright default lookup.
+
+Proxy/TLS behavior:
+
+- `--proxy` accepts HTTP and SOCKS proxy URLs such as `http://127.0.0.1:8080` and `socks5h://127.0.0.1:1080`.
+- `--ca-bundle` trusts a custom PEM bundle for requests mode and is passed to Chromium through well-known CA env vars as best effort. It defaults from `REQUESTS_CA_BUNDLE`, then `CURL_CA_BUNDLE`, then `SSL_CERT_FILE`.
+- `--insecure` disables TLS verification in requests mode and uses Playwright `ignore_https_errors` in browser mode.
+- Do not combine `--ca-bundle` and `--insecure`.
 
 ## Provider Rules
 
@@ -109,6 +119,7 @@ Protect these behaviors with tests when touched:
 - Auto mode does not use browser for small static pages.
 - Same-host redirect restriction.
 - Browser session reuse and per-target browser context isolation.
+- Proxy routing and TLS verification options.
 
 ## Commit Convention
 
