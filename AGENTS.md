@@ -12,6 +12,8 @@ Current detection scope is intentionally focused on three dimensions:
 
 Do not expand into analytics, payment, auth, ads, or broad CMS-style reporting unless the user explicitly asks.
 
+This is early-stage software. Prefer clean internal design over backward compatibility by default, including breaking Python import compatibility, cache schema compatibility, or CLI behavior when it materially simplifies the project. When doing so, explicitly tell the user what compatibility is being broken and why.
+
 ## CLI Behavior
 
 Common commands:
@@ -21,6 +23,7 @@ echo 'https://example.com' | uv run -m tech_scan
 echo 'https://example.com' | uv run -m tech_scan --mode requests --output jsonl
 echo 'https://example.com' | CHROMIUM_PATH=/usr/bin/chromium uv run -m tech_scan --mode browser
 echo 'https://example.com' | uv run -m tech_scan --mode auto --verbosity 1
+echo 'https://example.com' | uv run -m tech_scan --mode browser --concurrency 4 --timeout 10
 echo 'https://example.com' | uv run -m tech_scan --sanity-timeout 0.5
 echo 'https://example.com' | uv run -m tech_scan --proxy http://127.0.0.1:8080 --ca-bundle ~/.mitmproxy/mitmproxy-ca-cert.pem
 echo 'https://example.com' | uv run -m tech_scan --proxy socks5h://127.0.0.1:1080 --insecure
@@ -30,8 +33,10 @@ uv run -m tech_scan --provider wappalyzergo < domains.txt
 Fetch modes:
 
 - `requests`: browser-like HTTP request headers, no JavaScript execution.
-- `browser`: Playwright Chromium rendering.
+- `browser`: Playwright Chromium rendering. Browser concurrency should use the async Playwright path, not shared sync Playwright objects across threads.
 - `auto`: requests first, browser only for likely missed content: request errors, `401`/`403`/`429`/`503`, no useful response, explicit JavaScript-required text, or sparse SPA shells with no useful findings.
+
+The default per-target timeout is `10` seconds unless the CLI code says otherwise. If changing timeout semantics, update this file, CLI help, tests, and smoke commands together.
 
 Output modes:
 
@@ -54,7 +59,7 @@ Diagnostics:
 - `--verbosity 3`: adds detailed cache, fetch, browser, resource, provider, and timing logs on stderr.
 - Keep verbose diagnostics on stderr so JSONL stdout remains one machine-readable object per scanned URL.
 
-## Architecture
+## Architecture And Compatibility
 
 - `tech_scan/cli.py`: argparse setup, stdin/stdout handling, validation, and process-level browser-session lifecycle.
 - `tech_scan/scanner.py`: scan orchestration for target expansion, cache lookup/write, sanity checks, fetcher execution, auto browser fallback, provider execution, and result assembly.
@@ -68,6 +73,13 @@ Diagnostics:
 - `tech_scan/normalize.py`: target expansion from stdin input into concrete HTTP/HTTPS URL candidates.
 - `tech_scan/html_extract.py`: shared lightweight HTML extraction for scripts, meta tags, and URL-bearing attributes.
 - `tech_scan/url_policy.py`: shared same-host and redirect URL helpers.
+
+Compatibility guidance:
+
+- Prefer deleting compatibility shims instead of preserving stale internal APIs.
+- Do not add public imports for internal helpers in package `__init__.py` files.
+- Breaking cache schema/profile compatibility is acceptable; bump `FETCH_PROFILE_VERSION` directly and do not add migrations unless explicitly requested.
+- Breaking CLI behavior is acceptable when it improves scanner correctness or throughput, but mention it clearly in the final response and tests.
 
 ## Fetching And Cache Rules
 
@@ -103,9 +115,11 @@ Cache successful responses, HTTP error statuses, and target/server-side negative
 
 Fetchers receive one concrete URL and must fetch only that URL. Do not reintroduce protocol fallback inside fetchers; all HTTP/HTTPS expansion belongs before cache, sanity, and fetch in the scanner/normalization layer.
 
-Browser mode uses one shared Playwright Chromium session per scan run. Keep Playwright sync API lifecycle on one thread. Use `CHROMIUM_PATH` when set, otherwise `/usr/bin/chromium` when executable, otherwise Playwright default lookup.
+Browser mode should use Playwright's async API for concurrency. Do not share sync Playwright `Browser`, `BrowserContext`, `Page`, or persistent-context objects across threads.
 
-Browser mode loads vendored uBlock Origin Lite by default through a persistent Chromium context. Use `--no-browser-extension` when a raw browser session is needed. Because Chromium extensions require a persistent context, browser mode clears cookies between targets as best-effort isolation rather than creating a separate browser context per target when the extension is enabled.
+Use one async Playwright driver per CLI browser/auto run. With `--no-browser-extension`, prefer one Chromium browser with isolated contexts per target. With the default uBlock Origin Lite extension enabled, use separate persistent Chromium contexts/profiles for concurrent browser slots because Chromium extensions require persistent contexts and a shared persistent context would share cookies/storage between targets.
+
+Browser mode loads vendored uBlock Origin Lite by default. Use `--no-browser-extension` when a raw browser session is needed. Use `CHROMIUM_PATH` when set, otherwise `/usr/bin/chromium` when executable, otherwise Playwright default lookup.
 
 Proxy/TLS behavior:
 
@@ -182,7 +196,7 @@ Protect these behaviors with tests when touched:
 - Auto mode does not use browser for small static pages.
 - Same-host redirect restriction.
 - Shared HTML extraction and URL policy helpers remain deterministic.
-- Browser session reuse and per-target browser context isolation.
+- Browser async concurrency, cleanup of pages/contexts/profiles, and per-target browser context isolation.
 - Proxy routing and TLS verification options.
 - Browser resource capture and default uBlock Origin Lite loading.
 
