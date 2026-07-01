@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from typing import Callable
 
 from tech_scan.models import FetchResult, ResourceObservation
 from tech_scan.observations import header_display_name
 
+from ..regex_compile import SearchablePattern, compile_regex
 from ..signals import DetectionSignals
 
 
@@ -24,8 +24,8 @@ class Rule:
     detect: Detector
 
 
-def _compile(pattern: str) -> re.Pattern[str]:
-    return re.compile(pattern, re.I)
+def _compile(pattern: str) -> SearchablePattern:
+    return compile_regex(pattern)
 
 
 def header_detector(header: str, pattern: str) -> Detector:

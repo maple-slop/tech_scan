@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -16,6 +15,7 @@ from tech_scan.models import (
 )
 
 from .base import Provider
+from .regex_compile import SearchablePattern, compile_regex_or_none
 from .signals import DetectionSignals, node_attributes, node_text
 
 
@@ -65,7 +65,7 @@ WAF_ALLOWLIST = {
 class _CompiledPattern:
     pattern: str
     confidence: int
-    regex: re.Pattern[str] | None = None
+    regex: SearchablePattern | None = None
 
     @classmethod
     def from_value(cls, value: object) -> "_CompiledPattern":
@@ -81,10 +81,7 @@ class _CompiledPattern:
                     confidence = 100
         regex = None
         if pattern:
-            try:
-                regex = re.compile(pattern, re.I)
-            except re.error:
-                regex = None
+            regex = compile_regex_or_none(pattern)
         return cls(
             pattern=pattern,
             confidence=max(0, min(confidence, 100)),

@@ -1,6 +1,8 @@
 import unittest
 from unittest.mock import patch
 import subprocess
+import io
+from contextlib import redirect_stderr
 
 from tech_scan.models import FetchResult, ResourceObservation
 from tech_scan.providers import (
@@ -13,6 +15,7 @@ from tech_scan.providers.wappalyzergo import load_vendored_fingerprints
 from tech_scan.providers.signals import DetectionSignals
 import tech_scan.providers.wappalyzer_engine as wappalyzer_engine
 import tech_scan.providers.signals as provider_signals
+from tech_scan.providers.regex_compile import compile_regex, compile_regex_or_none, re2
 
 
 def make_fetch(headers=None, cookies=None, body="", globals_=None, url="https://example.com"):
@@ -43,6 +46,33 @@ def make_fetch(headers=None, cookies=None, body="", globals_=None, url="https://
 
 def names(findings):
     return {finding.name for finding in findings}
+
+
+class ProviderRegexCompileTests(unittest.TestCase):
+    def test_compile_regex_uses_re2_when_available(self):
+        regex = compile_regex("next")
+
+        self.assertTrue(regex.search("Next"))
+        if re2 is not None:
+            self.assertTrue(type(regex).__module__.startswith("re2"))
+
+    def test_compile_regex_falls_back_to_python_re(self):
+        regex = compile_regex(r"(?<=a)b")
+
+        self.assertTrue(regex.search("ab"))
+        self.assertEqual(type(regex).__module__, "re")
+
+    def test_compile_regex_or_none_preserves_invalid_pattern_behavior(self):
+        self.assertIsNone(compile_regex_or_none("["))
+
+    def test_re2_compile_failure_does_not_emit_stderr(self):
+        stderr = io.StringIO()
+
+        with redirect_stderr(stderr):
+            regex = compile_regex(r"(?<=a)b")
+
+        self.assertTrue(regex.search("ab"))
+        self.assertEqual(stderr.getvalue(), "")
 
 
 def make_fetch_with_resources(body="", resources=None, url="https://example.com"):
