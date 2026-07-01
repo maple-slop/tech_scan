@@ -10,6 +10,9 @@ from tech_scan.providers import (
     merge_findings,
 )
 from tech_scan.providers.wappalyzergo import load_vendored_fingerprints
+from tech_scan.providers.signals import DetectionSignals
+import tech_scan.providers.wappalyzer_engine as wappalyzer_engine
+import tech_scan.providers.signals as provider_signals
 
 
 def make_fetch(headers=None, cookies=None, body="", globals_=None, url="https://example.com"):
@@ -499,6 +502,119 @@ class ProviderTests(unittest.TestCase):
 
         self.assertEqual(detected[0].name, "React")
         self.assertEqual(detected[0].confidence, 75)
+
+    def test_detection_signals_share_meta_script_and_embedded_url_extraction(self):
+        fetch = make_fetch(
+            body=(
+                '<meta name="generator" content="Astro v4">'
+                '<a href="/admin/index.php">admin</a>'
+                '<a href="https://other.test/index.php">external</a>'
+                '<script src="/_astro/app.js"></script>'
+            ),
+            url="https://example.com/page",
+        )
+
+        signals = DetectionSignals.from_fetch(fetch)
+
+        self.assertEqual(signals.meta, {"generator": ["Astro v4"]})
+        self.assertEqual(signals.script_srcs, ["/_astro/app.js"])
+        self.assertIn("https://example.com/admin/index.php", signals.embedded_urls)
+        self.assertIn("https://example.com/_astro/app.js", signals.embedded_urls)
+        self.assertNotIn("https://other.test/index.php", signals.embedded_urls)
+
+    def test_detection_signals_parse_dom_lazily(self):
+        signals = DetectionSignals.from_fetch(make_fetch(body="<main></main>"))
+
+        with patch.object(provider_signals, "_parse_dom", wraps=provider_signals._parse_dom) as parse_mock:
+            self.assertEqual(signals.body, "<main></main>")
+            parse_mock.assert_not_called()
+            self.assertIsNotNone(signals.dom_parser)
+            self.assertIsNotNone(signals.dom_parser)
+
+        self.assertEqual(parse_mock.call_count, 1)
+
+    def test_wappalyzergo_patterns_are_not_reparsed_during_detection(self):
+        provider = WappalyzerGoProvider(
+            {
+                "apps": {
+                    "React": {
+                        "cats": [12],
+                        "scriptSrc": [r"react\.js\;confidence:75"],
+                    }
+                }
+            }
+        )
+
+        with patch.object(
+            wappalyzer_engine._CompiledPattern,
+            "from_value",
+            side_effect=AssertionError("pattern reparsed during detect"),
+        ):
+            detected = provider.detect(make_fetch(body='<script src="/react.js"></script>'))
+
+        self.assertEqual(names(detected), {"React"})
+
+    def test_wappalyzergo_indexes_skip_absent_keyed_apps(self):
+        provider = WappalyzerGoProvider(
+            {
+                "apps": {
+                    "Missing Header": {"cats": [22], "headers": {"x-missing": "yes"}},
+                    "Cloudflare": {"cats": [31], "headers": {"server": "cloudflare"}},
+                    "Html Only": {"cats": [12], "html": "html-only-marker"},
+                }
+            }
+        )
+
+        with patch.object(provider, "_detect_app", wraps=provider._detect_app) as detect_mock:
+            detected = provider.detect(
+                make_fetch(headers={"Server": "cloudflare"}, body="html-only-marker")
+            )
+
+        considered = {call.args[0].name for call in detect_mock.call_args_list}
+        self.assertEqual(considered, {"Cloudflare", "Html Only"})
+        self.assertEqual(names(detected), {"Cloudflare", "Html Only"})
+
+    def test_wappalyzergo_expensive_only_apps_still_match(self):
+        provider = WappalyzerGoProvider(
+            {
+                "apps": {
+                    "Html Only": {"cats": [12], "html": "html-only-marker"},
+                    "Dom Only": {"cats": [12], "dom": {".dom-only": {"exists": ""}}},
+                    "Js Only": {"cats": [12], "js": "AppGlobal"},
+                }
+            }
+        )
+
+        detected = provider.detect(
+            make_fetch(
+                body='<div class="dom-only">html-only-marker</div>',
+                globals_=["AppGlobal"],
+            )
+        )
+
+        self.assertEqual(names(detected), {"Html Only", "Dom Only", "Js Only"})
+
+    def test_wappalyzergo_cheap_candidates_collect_expensive_evidence(self):
+        provider = WappalyzerGoProvider(
+            {
+                "apps": {
+                    "Hybrid": {
+                        "cats": [12],
+                        "headers": {"server": "hybrid"},
+                        "html": "hybrid-html-marker",
+                    }
+                }
+            }
+        )
+
+        detected = provider.detect(
+            make_fetch(headers={"Server": "hybrid"}, body="hybrid-html-marker")
+        )
+        by_name = {finding.name: finding for finding in detected}
+
+        self.assertIn("Hybrid", by_name)
+        self.assertIn("wappalyzer header: server", by_name["Hybrid"].evidence)
+        self.assertIn("wappalyzer html", by_name["Hybrid"].evidence)
 
     def test_wappalyzergo_dom_exists_matches_captured_html(self):
         provider = WappalyzerGoProvider(

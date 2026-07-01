@@ -3,9 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from typing import Callable
-from urllib.parse import urljoin
 
-from tech_scan.html_extract import extract_meta, extract_url_attrs
 from tech_scan.models import (
     DIM_BACKEND,
     DIM_CDN_WAF_SERVER,
@@ -15,23 +13,12 @@ from tech_scan.models import (
     ResourceObservation,
 )
 from tech_scan.observations import header_display_name
-from tech_scan.url_policy import same_hostname
 
 from .base import Provider
+from .signals import DetectionSignals
 
 
-@dataclass(frozen=True)
-class DetectionContext:
-    body: str
-    body_with_scripts: str
-    script_resources: list[ResourceObservation]
-    text_resources: list[ResourceObservation]
-    cookie_names: list[str]
-    cookie_pairs: list[tuple[str, str]]
-    browser_globals: list[str]
-    meta: dict[str, list[str]]
-    urls: list[str]
-    embedded_urls: list[str]
+DetectionContext = DetectionSignals
 
 
 Detector = Callable[[FetchResult, DetectionContext], list[str]]
@@ -455,51 +442,12 @@ IMPLIED_FRONTENDS = {
 }
 
 
-def _same_host_embedded_urls(fetch: FetchResult, body: str) -> list[str]:
-    base_url = fetch.final_url or fetch.url
-    if not base_url:
-        return []
-    candidates = [*extract_url_attrs(body), *fetch.script_srcs]
-    for resource in fetch.resources:
-        if resource.url and resource.kind != "document":
-            candidates.append(resource.url)
-
-    seen: set[str] = set()
-    urls: list[str] = []
-    for candidate in candidates:
-        if not candidate or candidate.startswith(("mailto:", "tel:", "javascript:", "#")):
-            continue
-        absolute = urljoin(base_url, candidate)
-        if not same_hostname(base_url, absolute):
-            continue
-        if absolute not in seen:
-            seen.add(absolute)
-            urls.append(absolute)
-    return urls
-
-
 class BuiltinProvider(Provider):
     name = "builtin"
 
     def detect(self, fetch: FetchResult) -> list[Finding]:
         findings: dict[tuple[str, str], Finding] = {}
-        body = fetch.body or ""
-        context = DetectionContext(
-            body=body,
-            body_with_scripts="\n".join([body, *fetch.script_bodies]),
-            script_resources=fetch.script_resources,
-            text_resources=[
-                resource
-                for resource in fetch.resources
-                if resource.kind in {"document", "script", "stylesheet", "xhr", "fetch"}
-            ],
-            cookie_names=list(fetch.cookies.keys()),
-            cookie_pairs=list(fetch.cookies.items()),
-            browser_globals=list(fetch.browser_globals),
-            meta=extract_meta(body),
-            urls=[url for url in [fetch.url, fetch.final_url] if url],
-            embedded_urls=_same_host_embedded_urls(fetch, body),
-        )
+        context = DetectionSignals.from_fetch(fetch)
 
         for rule in RULES:
             evidence = rule.detect(fetch, context)
