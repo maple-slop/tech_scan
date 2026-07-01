@@ -1,3 +1,4 @@
+import asyncio
 import shutil
 import io
 import socket
@@ -17,6 +18,7 @@ from tech_scan.diagnostics import Diagnostics
 from tech_scan.fetchers.adblock import is_blocked_script_url
 from tech_scan.fetchers.auto import browser_fallback_reason
 from tech_scan.fetchers.browser import (
+    AsyncBrowserPool,
     BrowserSession,
     browser_extension_identity,
     chromium_executable_path,
@@ -216,6 +218,117 @@ def install_fake_playwright(playwright):
         {
             "playwright": SimpleNamespace(),
             "playwright.sync_api": sync_api,
+        },
+    )
+
+
+class AsyncFakeBrowserResponse(FakeBrowserResponse):
+    async def body(self):
+        if self._body_error:
+            raise RuntimeError(self._body_error)
+        return self._body
+
+
+class AsyncFakePage(FakePage):
+    async def route(self, pattern, handler):
+        self.routes.append((pattern, handler))
+
+    async def goto(self, url, **kwargs):
+        self.url = url
+        responses = [
+            AsyncFakeBrowserResponse(url, "document", headers={"server": "Chromium"}, body=b"<html></html>"),
+            AsyncFakeBrowserResponse(
+                "https://example.com/app.js",
+                "script",
+                headers={"content-type": "application/javascript"},
+                body=b"React.version='18.0.0'",
+            ),
+        ]
+        for response in responses:
+            for handler in self.handlers.get("response", []):
+                handler(response)
+        return responses[0]
+
+    async def content(self):
+        return '<html><script src="/app.js"></script></html>'
+
+    async def evaluate(self, script):
+        if "Object.keys(window)" in script:
+            return ["React"]
+        return ["https://example.com/app.js"]
+
+    async def close(self):
+        self.closed = True
+
+
+class AsyncFakeContext(FakeContext):
+    async def new_page(self):
+        page = AsyncFakePage()
+        self.pages.append(page)
+        return page
+
+    async def cookies(self):
+        return [{"name": "sid", "value": "abc"}]
+
+    async def clear_cookies(self):
+        self.cleared_cookies += 1
+
+    async def close(self):
+        self.closed = True
+
+
+class AsyncFakeBrowser(FakeBrowser):
+    async def new_context(self, **kwargs):
+        context = AsyncFakeContext(self)
+        self.contexts.append((context, kwargs))
+        return context
+
+    async def close(self):
+        self.closed = True
+
+
+class AsyncFakeChromium:
+    def __init__(self):
+        self.launch_args = []
+        self.persistent_launch_args = []
+        self.browser = AsyncFakeBrowser()
+        self.persistent_contexts = []
+
+    async def launch(self, **kwargs):
+        self.launch_args.append(kwargs)
+        return self.browser
+
+    async def launch_persistent_context(self, user_data_dir, **kwargs):
+        context = AsyncFakeContext(self.browser)
+        self.persistent_launch_args.append((user_data_dir, kwargs))
+        self.persistent_contexts.append(context)
+        return context
+
+
+class AsyncFakePlaywright:
+    def __init__(self):
+        self.chromium = AsyncFakeChromium()
+        self.stopped = False
+
+    async def stop(self):
+        self.stopped = True
+
+
+class AsyncFakePlaywrightStarter:
+    def __init__(self, playwright):
+        self.playwright = playwright
+
+    async def start(self):
+        return self.playwright
+
+
+def install_fake_async_playwright(playwright):
+    async_api = SimpleNamespace(async_playwright=lambda: AsyncFakePlaywrightStarter(playwright))
+    return patch.dict(
+        sys.modules,
+        {
+            "playwright": SimpleNamespace(),
+            "playwright.async_api": async_api,
         },
     )
 
@@ -727,6 +840,49 @@ class FetchTests(unittest.TestCase):
         self.assertEqual(len(playwright.chromium.browser.contexts), 1)
         self.assertTrue(playwright.chromium.browser.contexts[0][0].closed)
         self.assertTrue(playwright.chromium.browser.closed)
+
+    def test_async_browser_pool_raw_mode_uses_isolated_contexts_concurrently(self):
+        async def run():
+            playwright = AsyncFakePlaywright()
+            with install_fake_async_playwright(playwright):
+                async with AsyncBrowserPool(proxy=None, concurrency=2, enable_extension=False) as pool:
+                    first, second = await asyncio.gather(
+                        pool.fetch("one.example", "https://one.example", 5),
+                        pool.fetch("two.example", "https://two.example", 5),
+                    )
+                return playwright, first, second
+
+        playwright, first, second = asyncio.run(run())
+
+        self.assertEqual(len(playwright.chromium.launch_args), 1)
+        self.assertEqual(len(playwright.chromium.persistent_launch_args), 0)
+        self.assertEqual(len(playwright.chromium.browser.contexts), 2)
+        self.assertTrue(all(context.closed for context, _ in playwright.chromium.browser.contexts))
+        self.assertTrue(playwright.chromium.browser.closed)
+        self.assertTrue(playwright.stopped)
+        self.assertEqual(first.browser_globals, ["React"])
+        self.assertEqual(second.script_srcs, ["https://example.com/app.js"])
+
+    def test_async_browser_pool_extension_mode_uses_persistent_context_pool(self):
+        async def run():
+            playwright = AsyncFakePlaywright()
+            with install_fake_async_playwright(playwright):
+                async with AsyncBrowserPool(proxy=None, concurrency=2, enable_extension=True) as pool:
+                    first, second = await asyncio.gather(
+                        pool.fetch("one.example", "https://one.example", 5),
+                        pool.fetch("two.example", "https://two.example", 5),
+                    )
+                return playwright, first, second
+
+        playwright, first, second = asyncio.run(run())
+
+        self.assertEqual(len(playwright.chromium.launch_args), 0)
+        self.assertEqual(len(playwright.chromium.persistent_launch_args), 2)
+        self.assertTrue(all(context.closed for context in playwright.chromium.persistent_contexts))
+        self.assertTrue(playwright.stopped)
+        self.assertEqual(sum(context.cleared_cookies for context in playwright.chromium.persistent_contexts), 2)
+        self.assertEqual(first.status, 200)
+        self.assertEqual(second.status, 200)
 
     def test_browser_session_records_subresources_and_body_errors(self):
         playwright = FakePlaywright()

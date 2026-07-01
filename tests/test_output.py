@@ -1,3 +1,4 @@
+import asyncio
 import io
 import json
 import threading
@@ -185,6 +186,10 @@ class OutputTests(unittest.TestCase):
         self.assertEqual(parse_args([]).sanity_timeout, 1.0)
         self.assertEqual(parse_args(["--sanity-timeout", "0.25"]).sanity_timeout, 0.25)
 
+    def test_default_timeout_is_ten_seconds(self):
+        self.assertEqual(parse_args([]).timeout, 10)
+        self.assertEqual(parse_args(["--timeout", "2.5"]).timeout, 2.5)
+
     def test_main_jsonl_outputs_two_results_for_bare_domain(self):
         with TemporaryDirectory() as tmpdir:
             db = Path(tmpdir) / "results.db"
@@ -339,13 +344,14 @@ class OutputTests(unittest.TestCase):
         lines = [json.loads(line) for line in stdout.getvalue().splitlines()]
         self.assertEqual([line["input"] for line in lines], ["b.example", "a.example"])
 
-    def test_main_browser_mode_reuses_one_browser_session(self):
-        sessions = []
+    def test_main_browser_mode_uses_one_async_browser_pool(self):
+        pools = []
 
-        class FakeBrowserSession:
+        class FakeAsyncBrowserPool:
             def __init__(
                 self,
                 proxy,
+                concurrency,
                 ignore_https_errors=False,
                 ca_bundle=None,
                 enable_extension=True,
@@ -353,19 +359,23 @@ class OutputTests(unittest.TestCase):
                 include_traceback=False,
             ):
                 self.proxy = proxy
+                self.concurrency = concurrency
                 self.ignore_https_errors = ignore_https_errors
                 self.ca_bundle = ca_bundle
                 self.enable_extension = enable_extension
                 self.diagnostics = diagnostics
                 self.include_traceback = include_traceback
                 self.closed = False
-                sessions.append(self)
+                pools.append(self)
 
-            def close(self):
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
                 self.closed = True
 
-        def fake_scan_input(target, args, providers_requested, provider_names, browser_session=None):
-            self.assertIs(browser_session, sessions[0])
+        async def fake_scan_input(target, args, providers_requested, provider_names, browser_session=None):
+            self.assertIs(browser_session, pools[0])
             return [{
                 "input": target,
                 "url": f"https://{target}/",
@@ -385,17 +395,112 @@ class OutputTests(unittest.TestCase):
                 "browser",
                 "--output",
                 "jsonl",
+                "--concurrency",
+                "2",
             ]
-            with patch("tech_scan.cli.BrowserSession", FakeBrowserSession):
-                with patch("tech_scan.cli.scan_input", side_effect=fake_scan_input) as scan_mock:
+            with patch("tech_scan.cli.AsyncBrowserPool", FakeAsyncBrowserPool):
+                with patch("tech_scan.cli.scan_input_async", side_effect=fake_scan_input) as scan_mock:
                     with patch("sys.stdin", io.StringIO("a.example\nb.example\n")):
                         stdout = io.StringIO()
                         with redirect_stdout(stdout):
                             self.assertEqual(main(args), 0)
 
-        self.assertEqual(len(sessions), 1)
-        self.assertTrue(sessions[0].closed)
+        self.assertEqual(len(pools), 1)
+        self.assertEqual(pools[0].concurrency, 2)
+        self.assertTrue(pools[0].closed)
         self.assertEqual(scan_mock.call_count, 2)
+
+    def test_main_browser_output_is_eager_completion_order(self):
+        class FakeAsyncBrowserPool:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                pass
+
+        async def fake_scan_input(target, args, providers_requested, provider_names, browser_session=None):
+            if target == "a.example":
+                await asyncio.sleep(0.05)
+            return [{
+                "input": target,
+                "url": f"https://{target}/",
+                "status": 200,
+                "mode": "browser",
+                "providers": ["builtin"],
+                "cached": False,
+                "technologies": [],
+                "error": None,
+            }]
+
+        with TemporaryDirectory() as tmpdir:
+            args = [
+                "--db",
+                str(Path(tmpdir) / "results.db"),
+                "--mode",
+                "browser",
+                "--output",
+                "jsonl",
+                "--concurrency",
+                "2",
+            ]
+            with patch("tech_scan.cli.AsyncBrowserPool", FakeAsyncBrowserPool):
+                with patch("tech_scan.cli.scan_input_async", side_effect=fake_scan_input):
+                    with patch("sys.stdin", io.StringIO("a.example\nb.example\n")):
+                        stdout = io.StringIO()
+                        with redirect_stdout(stdout):
+                            self.assertEqual(main(args), 0)
+
+        lines = [json.loads(line) for line in stdout.getvalue().splitlines()]
+        self.assertEqual([line["input"] for line in lines], ["b.example", "a.example"])
+
+    def test_main_auto_uses_async_completion_order(self):
+        class FakeAsyncBrowserPool:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                pass
+
+        async def fake_scan_input(target, args, providers_requested, provider_names, browser_session=None):
+            if target == "a.example":
+                await asyncio.sleep(0.05)
+            return [{
+                "input": target,
+                "url": f"https://{target}/",
+                "status": 200,
+                "mode": "requests",
+                "providers": ["builtin"],
+                "cached": False,
+                "technologies": [],
+                "error": None,
+            }]
+
+        with TemporaryDirectory() as tmpdir:
+            args = [
+                "--db",
+                str(Path(tmpdir) / "results.db"),
+                "--mode",
+                "auto",
+                "--output",
+                "jsonl",
+                "--concurrency",
+                "2",
+            ]
+            with patch("tech_scan.cli.AsyncBrowserPool", FakeAsyncBrowserPool):
+                with patch("tech_scan.cli.scan_input_async", side_effect=fake_scan_input):
+                    with patch("sys.stdin", io.StringIO("a.example\nb.example\n")):
+                        stdout = io.StringIO()
+                        with redirect_stdout(stdout):
+                            self.assertEqual(main(args), 0)
+
+        lines = [json.loads(line) for line in stdout.getvalue().splitlines()]
+        self.assertEqual([line["input"] for line in lines], ["b.example", "a.example"])
 
     def test_jsonl_output_stays_stdout_and_verbosity_logs_go_to_stderr(self):
         def fake_scan_input(target, args, providers_requested, provider_names, browser_session=None):
