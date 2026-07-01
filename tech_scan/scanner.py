@@ -27,6 +27,7 @@ from .url_policy import same_hostname
 
 
 BlockingRunner = Callable[..., Awaitable[Any]]
+ResultEmitter = Callable[[dict[str, Any]], None]
 
 
 @dataclass
@@ -80,35 +81,43 @@ class ScanRunner:
         )
         self.providers = build_providers(providers_requested)
 
-    async def scan_input_async(self, raw_target: str) -> list[dict[str, Any]]:
+    async def scan_input_async(
+        self,
+        raw_target: str,
+        emit_result: ResultEmitter | None = None,
+    ) -> list[dict[str, Any]]:
         raw_target = raw_target.strip()
         try:
             candidates = expand_targets(raw_target)
         except ValueError as exc:
-            return [
-                {
-                    "input": raw_target,
-                    "url": None,
-                    "final_url": None,
-                    "status": None,
-                    "mode": self.args.mode,
-                    "providers": self.provider_names,
-                    "cached": False,
-                    "cache_lookup": "not_applicable",
-                    "cache_stored": None,
-                    "cache_reason": None,
-                    "cache_created_at": None,
-                    "cache_updated_at": None,
-                    "observations": [],
-                    "technologies": [],
-                    "error": str(exc),
-                }
-            ]
+            result = {
+                "input": raw_target,
+                "url": None,
+                "final_url": None,
+                "status": None,
+                "mode": self.args.mode,
+                "providers": self.provider_names,
+                "cached": False,
+                "cache_lookup": "not_applicable",
+                "cache_stored": None,
+                "cache_reason": None,
+                "cache_created_at": None,
+                "cache_updated_at": None,
+                "observations": [],
+                "technologies": [],
+                "error": str(exc),
+            }
+            if emit_result:
+                emit_result(result)
+            return [result]
 
-        return [
-            await self.scan_target_async(candidate.input, candidate.url)
-            for candidate in candidates
-        ]
+        results = []
+        for candidate in candidates:
+            result = await self.scan_target_async(candidate.input, candidate.url)
+            results.append(result)
+            if emit_result:
+                emit_result(result)
+        return results
 
     async def scan_target_async(self, raw_target: str, target: str) -> dict[str, Any]:
         findings = []
@@ -355,6 +364,7 @@ def scan_input(
     providers_requested: list[str],
     provider_names: list[str],
     browser_session: AsyncBrowserPool | None = None,
+    emit_result: ResultEmitter | None = None,
 ) -> list[dict[str, Any]]:
     return asyncio.run(ScanRunner(
         args,
@@ -362,7 +372,7 @@ def scan_input(
         provider_names,
         browser_session,
         run_blocking_direct,
-    ).scan_input_async(raw_target))
+    ).scan_input_async(raw_target, emit_result))
 
 
 async def scan_input_async(
@@ -371,10 +381,11 @@ async def scan_input_async(
     providers_requested: list[str],
     provider_names: list[str],
     browser_session: AsyncBrowserPool | None = None,
+    emit_result: ResultEmitter | None = None,
 ) -> list[dict[str, Any]]:
     return await ScanRunner(
         args,
         providers_requested,
         provider_names,
         browser_session,
-    ).scan_input_async(raw_target)
+    ).scan_input_async(raw_target, emit_result)

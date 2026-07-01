@@ -279,6 +279,27 @@ class OutputTests(unittest.TestCase):
         self.assertEqual(len(lines), 1)
         self.assertEqual(lines[0]["url"], "https://example.com")
 
+    def test_main_validation_error_emits_not_applicable_cache_lookup(self):
+        with TemporaryDirectory() as tmpdir:
+            args = [
+                "--db",
+                str(Path(tmpdir) / "results.db"),
+                "--mode",
+                "requests",
+                "--output",
+                "jsonl",
+            ]
+            with patch("sys.stdin", io.StringIO("example.com:8080\n")):
+                stdout = io.StringIO()
+                with redirect_stdout(stdout):
+                    self.assertEqual(main(args), 0)
+
+        lines = [json.loads(line) for line in stdout.getvalue().splitlines()]
+        self.assertEqual(len(lines), 1)
+        self.assertIsNone(lines[0]["url"])
+        self.assertEqual(lines[0]["cache_lookup"], "not_applicable")
+        self.assertIn("scheme is required", lines[0]["error"])
+
     def test_main_human_output_separates_entries_with_blank_line(self):
         with TemporaryDirectory() as tmpdir:
             db = Path(tmpdir) / "results.db"
@@ -303,7 +324,12 @@ class OutputTests(unittest.TestCase):
                 "error": None,
             }
 
-            with patch("tech_scan.scheduler.scan_input", return_value=[fetch_result]):
+            def fake_scan_input(target, args, providers_requested, provider_names, browser_session=None, emit_result=None):
+                if emit_result:
+                    emit_result(fetch_result)
+                return [fetch_result]
+
+            with patch("tech_scan.scheduler.scan_input", side_effect=fake_scan_input):
                 with patch("sys.stdin", io.StringIO("a.example\nb.example\n")):
                     stdout = io.StringIO()
                     with redirect_stdout(stdout):
@@ -314,12 +340,12 @@ class OutputTests(unittest.TestCase):
     def test_main_requests_output_is_eager_completion_order(self):
         first_can_finish = threading.Event()
 
-        def fake_scan_input(target, args, providers_requested, provider_names, browser_session=None):
+        def fake_scan_input(target, args, providers_requested, provider_names, browser_session=None, emit_result=None):
             if target == "a.example":
                 self.assertTrue(first_can_finish.wait(timeout=5))
             else:
                 first_can_finish.set()
-            return [{
+            results = [{
                 "input": target,
                 "url": f"https://{target}/",
                 "status": 200,
@@ -329,6 +355,10 @@ class OutputTests(unittest.TestCase):
                 "technologies": [],
                 "error": None,
             }]
+            if emit_result:
+                for result in results:
+                    emit_result(result)
+            return results
 
         with TemporaryDirectory() as tmpdir:
             args = [
@@ -349,6 +379,72 @@ class OutputTests(unittest.TestCase):
 
         lines = [json.loads(line) for line in stdout.getvalue().splitlines()]
         self.assertEqual([line["input"] for line in lines], ["b.example", "a.example"])
+
+    def test_main_requests_prints_first_concrete_result_before_second_finishes(self):
+        first_emitted = threading.Event()
+        release_second = threading.Event()
+        exit_code = {}
+
+        def fake_scan_input(target, args, providers_requested, provider_names, browser_session=None, emit_result=None):
+            results = [
+                {
+                    "input": target,
+                    "url": f"http://{target}/",
+                    "status": 200,
+                    "mode": "requests",
+                    "providers": ["builtin"],
+                    "cached": True,
+                    "technologies": [],
+                    "error": None,
+                },
+                {
+                    "input": target,
+                    "url": f"https://{target}/",
+                    "status": 200,
+                    "mode": "requests",
+                    "providers": ["builtin"],
+                    "cached": True,
+                    "technologies": [],
+                    "error": None,
+                },
+            ]
+            assert emit_result is not None
+            emit_result(results[0])
+            first_emitted.set()
+            self.assertTrue(release_second.wait(timeout=5))
+            emit_result(results[1])
+            return results
+
+        with TemporaryDirectory() as tmpdir:
+            args = [
+                "--db",
+                str(Path(tmpdir) / "results.db"),
+                "--mode",
+                "requests",
+                "--output",
+                "jsonl",
+                "--concurrency",
+                "1",
+            ]
+            with patch("tech_scan.scheduler.scan_input", side_effect=fake_scan_input):
+                with patch("sys.stdin", io.StringIO("example.com\n")):
+                    stdout = io.StringIO()
+                    with redirect_stdout(stdout):
+                        thread = threading.Thread(
+                            target=lambda: exit_code.setdefault("value", main(args))
+                        )
+                        thread.start()
+                        self.assertTrue(first_emitted.wait(timeout=5))
+                        lines = stdout.getvalue().splitlines()
+                        self.assertEqual(len(lines), 1)
+                        self.assertEqual(json.loads(lines[0])["url"], "http://example.com/")
+                        release_second.set()
+                        thread.join(timeout=5)
+
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(exit_code["value"], 0)
+        lines = [json.loads(line) for line in stdout.getvalue().splitlines()]
+        self.assertEqual([line["url"] for line in lines], ["http://example.com/", "https://example.com/"])
 
     def test_main_browser_mode_uses_one_async_browser_pool(self):
         pools = []
@@ -380,9 +476,9 @@ class OutputTests(unittest.TestCase):
             async def __aexit__(self, exc_type, exc, tb):
                 self.closed = True
 
-        async def fake_scan_input(target, args, providers_requested, provider_names, browser_session=None):
+        async def fake_scan_input(target, args, providers_requested, provider_names, browser_session=None, emit_result=None):
             self.assertIs(browser_session, pools[0])
-            return [{
+            results = [{
                 "input": target,
                 "url": f"https://{target}/",
                 "status": 200,
@@ -392,6 +488,10 @@ class OutputTests(unittest.TestCase):
                 "technologies": [],
                 "error": None,
             }]
+            if emit_result:
+                for result in results:
+                    emit_result(result)
+            return results
 
         with TemporaryDirectory() as tmpdir:
             args = [
@@ -427,10 +527,10 @@ class OutputTests(unittest.TestCase):
             async def __aexit__(self, exc_type, exc, tb):
                 pass
 
-        async def fake_scan_input(target, args, providers_requested, provider_names, browser_session=None):
+        async def fake_scan_input(target, args, providers_requested, provider_names, browser_session=None, emit_result=None):
             if target == "a.example":
                 await asyncio.sleep(0.05)
-            return [{
+            results = [{
                 "input": target,
                 "url": f"https://{target}/",
                 "status": 200,
@@ -440,6 +540,10 @@ class OutputTests(unittest.TestCase):
                 "technologies": [],
                 "error": None,
             }]
+            if emit_result:
+                for result in results:
+                    emit_result(result)
+            return results
 
         with TemporaryDirectory() as tmpdir:
             args = [
@@ -462,6 +566,87 @@ class OutputTests(unittest.TestCase):
         lines = [json.loads(line) for line in stdout.getvalue().splitlines()]
         self.assertEqual([line["input"] for line in lines], ["b.example", "a.example"])
 
+    def test_main_browser_prints_first_concrete_result_before_second_finishes(self):
+        first_emitted = threading.Event()
+        release_second = threading.Event()
+        exit_code = {}
+
+        class FakeAsyncBrowserPool:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                pass
+
+        async def fake_scan_input(target, args, providers_requested, provider_names, browser_session=None, emit_result=None):
+            results = [
+                {
+                    "input": target,
+                    "url": f"http://{target}/",
+                    "status": 200,
+                    "mode": "browser",
+                    "providers": ["builtin"],
+                    "cached": True,
+                    "technologies": [],
+                    "error": None,
+                },
+                {
+                    "input": target,
+                    "url": f"https://{target}/",
+                    "status": 200,
+                    "mode": "browser",
+                    "providers": ["builtin"],
+                    "cached": True,
+                    "technologies": [],
+                    "error": None,
+                },
+            ]
+            assert emit_result is not None
+            emit_result(results[0])
+            first_emitted.set()
+            for _ in range(5000):
+                if release_second.is_set():
+                    break
+                await asyncio.sleep(0.001)
+            self.assertTrue(release_second.is_set())
+            emit_result(results[1])
+            return results
+
+        with TemporaryDirectory() as tmpdir:
+            args = [
+                "--db",
+                str(Path(tmpdir) / "results.db"),
+                "--mode",
+                "browser",
+                "--output",
+                "jsonl",
+                "--concurrency",
+                "1",
+            ]
+            with patch("tech_scan.scheduler.AsyncBrowserPool", FakeAsyncBrowserPool):
+                with patch("tech_scan.scheduler.scan_input_async", side_effect=fake_scan_input):
+                    with patch("sys.stdin", io.StringIO("example.com\n")):
+                        stdout = io.StringIO()
+                        with redirect_stdout(stdout):
+                            thread = threading.Thread(
+                                target=lambda: exit_code.setdefault("value", main(args))
+                            )
+                            thread.start()
+                            self.assertTrue(first_emitted.wait(timeout=5))
+                            lines = stdout.getvalue().splitlines()
+                            self.assertEqual(len(lines), 1)
+                            self.assertEqual(json.loads(lines[0])["url"], "http://example.com/")
+                            release_second.set()
+                            thread.join(timeout=5)
+
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(exit_code["value"], 0)
+        lines = [json.loads(line) for line in stdout.getvalue().splitlines()]
+        self.assertEqual([line["url"] for line in lines], ["http://example.com/", "https://example.com/"])
+
     def test_main_auto_uses_async_completion_order(self):
         class FakeAsyncBrowserPool:
             def __init__(self, *args, **kwargs):
@@ -473,10 +658,10 @@ class OutputTests(unittest.TestCase):
             async def __aexit__(self, exc_type, exc, tb):
                 pass
 
-        async def fake_scan_input(target, args, providers_requested, provider_names, browser_session=None):
+        async def fake_scan_input(target, args, providers_requested, provider_names, browser_session=None, emit_result=None):
             if target == "a.example":
                 await asyncio.sleep(0.05)
-            return [{
+            results = [{
                 "input": target,
                 "url": f"https://{target}/",
                 "status": 200,
@@ -486,6 +671,10 @@ class OutputTests(unittest.TestCase):
                 "technologies": [],
                 "error": None,
             }]
+            if emit_result:
+                for result in results:
+                    emit_result(result)
+            return results
 
         with TemporaryDirectory() as tmpdir:
             args = [
@@ -508,10 +697,91 @@ class OutputTests(unittest.TestCase):
         lines = [json.loads(line) for line in stdout.getvalue().splitlines()]
         self.assertEqual([line["input"] for line in lines], ["b.example", "a.example"])
 
+    def test_main_auto_prints_first_concrete_result_before_second_finishes(self):
+        first_emitted = threading.Event()
+        release_second = threading.Event()
+        exit_code = {}
+
+        class FakeAsyncBrowserPool:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                pass
+
+        async def fake_scan_input(target, args, providers_requested, provider_names, browser_session=None, emit_result=None):
+            results = [
+                {
+                    "input": target,
+                    "url": f"http://{target}/",
+                    "status": 200,
+                    "mode": "requests",
+                    "providers": ["builtin"],
+                    "cached": True,
+                    "technologies": [],
+                    "error": None,
+                },
+                {
+                    "input": target,
+                    "url": f"https://{target}/",
+                    "status": 200,
+                    "mode": "requests",
+                    "providers": ["builtin"],
+                    "cached": True,
+                    "technologies": [],
+                    "error": None,
+                },
+            ]
+            assert emit_result is not None
+            emit_result(results[0])
+            first_emitted.set()
+            for _ in range(5000):
+                if release_second.is_set():
+                    break
+                await asyncio.sleep(0.001)
+            self.assertTrue(release_second.is_set())
+            emit_result(results[1])
+            return results
+
+        with TemporaryDirectory() as tmpdir:
+            args = [
+                "--db",
+                str(Path(tmpdir) / "results.db"),
+                "--mode",
+                "auto",
+                "--output",
+                "jsonl",
+                "--concurrency",
+                "1",
+            ]
+            with patch("tech_scan.scheduler.AsyncBrowserPool", FakeAsyncBrowserPool):
+                with patch("tech_scan.scheduler.scan_input_async", side_effect=fake_scan_input):
+                    with patch("sys.stdin", io.StringIO("example.com\n")):
+                        stdout = io.StringIO()
+                        with redirect_stdout(stdout):
+                            thread = threading.Thread(
+                                target=lambda: exit_code.setdefault("value", main(args))
+                            )
+                            thread.start()
+                            self.assertTrue(first_emitted.wait(timeout=5))
+                            lines = stdout.getvalue().splitlines()
+                            self.assertEqual(len(lines), 1)
+                            self.assertEqual(json.loads(lines[0])["url"], "http://example.com/")
+                            release_second.set()
+                            thread.join(timeout=5)
+
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(exit_code["value"], 0)
+        lines = [json.loads(line) for line in stdout.getvalue().splitlines()]
+        self.assertEqual([line["url"] for line in lines], ["http://example.com/", "https://example.com/"])
+
     def test_jsonl_output_stays_stdout_and_verbosity_logs_go_to_stderr(self):
-        def fake_scan_input(target, args, providers_requested, provider_names, browser_session=None):
+        def fake_scan_input(target, args, providers_requested, provider_names, browser_session=None, emit_result=None):
             args._diagnostics.log(1, f"diagnostic for {target}")
-            return [{
+            results = [{
                 "input": target,
                 "url": f"https://{target}/",
                 "status": 200,
@@ -521,6 +791,10 @@ class OutputTests(unittest.TestCase):
                 "technologies": [],
                 "error": None,
             }]
+            if emit_result:
+                for result in results:
+                    emit_result(result)
+            return results
 
         with TemporaryDirectory() as tmpdir:
             args = [
