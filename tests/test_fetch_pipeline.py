@@ -36,13 +36,19 @@ def ok_sanity():
     return SanityResult("ok", "example.com", (443,), open_ip="192.0.2.1", open_port=443)
 
 
-def document_fetch(mode="requests", url="https://example.com", status=200, error=None):
+def document_fetch(
+    mode="requests",
+    url="https://example.com",
+    status=200,
+    error=None,
+    headers=None,
+):
     return FetchResult(
         input="example.com",
         url=url,
         final_url=url if status else None,
         status=status,
-        headers={"server": "example"},
+        headers=headers or {"server": "example"},
         cookies={},
         body="ok" if not error else "",
         mode=mode,
@@ -271,6 +277,72 @@ class FetchPipelineTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(outcome.reason)
         sanity_mock.assert_not_called()
         requests_mock.assert_not_called()
+
+    async def test_null_mode_prefers_successful_browser_cache_over_requests_cache(self):
+        with TemporaryDirectory() as tmpdir:
+            db = Path(tmpdir) / "results.db"
+            requests_fetch = document_fetch(headers={"server": "requests"})
+            browser_fetch = document_fetch(mode="browser", headers={"server": "browser"})
+
+            with patch("tech_scan.fetch_pipeline.check_target_ports", return_value=ok_sanity()):
+                with patch("tech_scan.fetch_pipeline.fetch_requests", return_value=requests_fetch):
+                    await self.pipeline(args_for(db)).fetch(
+                        "requests",
+                        "example.com",
+                        "https://example.com",
+                    )
+                browser_mock = AsyncMock(return_value=browser_fetch)
+                with patch("tech_scan.fetch_pipeline.fetch_browser_async", browser_mock):
+                    await self.pipeline(args_for(db, mode="browser")).fetch(
+                        "browser",
+                        "example.com",
+                        "https://example.com",
+                    )
+
+            cached, outcome = await self.pipeline(args_for(db, mode="null")).fetch(
+                "null",
+                "example.com",
+                "https://example.com",
+            )
+
+        self.assertEqual(cached.mode, "null")
+        self.assertEqual(cached.headers["server"], "browser")
+        self.assertEqual(outcome.lookup, "hit")
+
+    async def test_null_mode_uses_requests_cache_when_browser_cache_is_not_2xx(self):
+        with TemporaryDirectory() as tmpdir:
+            db = Path(tmpdir) / "results.db"
+            requests_fetch = document_fetch(headers={"server": "requests"})
+            browser_fetch = document_fetch(
+                mode="browser",
+                status=403,
+                headers={"server": "browser"},
+            )
+
+            with patch("tech_scan.fetch_pipeline.check_target_ports", return_value=ok_sanity()):
+                with patch("tech_scan.fetch_pipeline.fetch_requests", return_value=requests_fetch):
+                    await self.pipeline(args_for(db)).fetch(
+                        "requests",
+                        "example.com",
+                        "https://example.com",
+                    )
+                browser_mock = AsyncMock(return_value=browser_fetch)
+                with patch("tech_scan.fetch_pipeline.fetch_browser_async", browser_mock):
+                    await self.pipeline(args_for(db, mode="browser")).fetch(
+                        "browser",
+                        "example.com",
+                        "https://example.com",
+                    )
+
+            cached, outcome = await self.pipeline(args_for(db, mode="null")).fetch(
+                "null",
+                "example.com",
+                "https://example.com",
+            )
+
+        self.assertEqual(cached.mode, "null")
+        self.assertEqual(cached.headers["server"], "requests")
+        self.assertEqual(outcome.lookup, "hit")
 
     async def test_null_mode_refresh_bypasses_cache_and_does_not_store(self):
         with TemporaryDirectory() as tmpdir:

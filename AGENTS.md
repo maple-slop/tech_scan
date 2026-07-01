@@ -39,6 +39,8 @@ Fetch modes:
 - `auto`: requests first, browser only for likely missed content: request errors, `401`/`403`/`429`/`503`, no useful response, explicit JavaScript-required text, or sparse SPA shells with no useful findings.
 - `null`: no-network mode. It performs detection only from existing cached fetch observations, reports a clean cache-miss error for uncached inputs, and must not run sanity checks, requests fetching, browser fetching, or cache writes.
 
+Cached `auto` scans must not create new network observations. If cached requests data triggers browser fallback, use cached browser data when present; if browser cache is missing, keep the cached requests result and add a non-scoring `browser_fallback_skipped` observation. Use `--refresh` to perform live fetch work and fill missing cache entries.
+
 The default per-target timeout is `10` seconds unless the CLI code says otherwise. If changing timeout semantics, update this file, CLI help, tests, and smoke commands together.
 
 Output modes:
@@ -117,7 +119,7 @@ Fresh fetches run a default-on DNS/TCP sanity check before requests or browser m
 
 Cache successful responses, HTTP error statuses, and target/server-side negative outcomes. Do not cache local/client failures such as missing Playwright, missing Chromium/browser executable, browser launch failures, or local browser context/session startup failures. Cache diagnostics at verbosity 3 should include write/drop reasons.
 
-`--mode null` reads existing `requests`/`browser` cache entries for the concrete target and recomputes provider findings from those cached observations. A null-mode cache miss is intentionally uncacheable and should report `cache_stored=false`, `cache_reason="null-cache-miss"`, and a short error without stack trace at default verbosity.
+`--mode null` reads existing `requests`/`browser` cache entries for the concrete target and recomputes provider findings from those cached observations. When both requests and browser cache entries exist, prefer a successful `2xx` browser observation; otherwise fall back to requests cache first. A null-mode cache miss is intentionally uncacheable and should report `cache_stored=false`, `cache_reason="null-cache-miss"`, and a short error without stack trace at default verbosity.
 
 Fetchers receive one concrete URL and must fetch only that URL. Do not reintroduce protocol fallback inside fetchers; all HTTP/HTTPS expansion belongs before cache, sanity, and fetch in the scanner/normalization layer.
 

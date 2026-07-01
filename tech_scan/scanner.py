@@ -15,7 +15,11 @@ from .fetch_pipeline import CacheOutcome, FetchPipeline
 from .fetchers.browser import AsyncBrowserPool
 from .models import FetchResult, Observation, ScanResult, TechnologyResult
 from .normalize import expand_targets
-from .observations import browser_fallback_failed_observation, collect_header_observations
+from .observations import (
+    browser_fallback_failed_observation,
+    cached_auto_fallback_skipped_observation,
+    collect_header_observations,
+)
 from .providers import build_providers, merge_findings
 
 
@@ -112,18 +116,27 @@ class ScanRunner:
                     f"auto switching fetcher: target={target} from=requests to=browser "
                     f"reason={fallback_reason}",
                 )
-            browser_fetch, cache_outcome = await self.fetch_pipeline.fetch(
-                "browser",
+            browser_fetch, cache_outcome = await self._browser_fallback_fetch(
                 raw_target,
                 target,
+                fallback_reason,
+                fetch,
+                auto_observations,
             )
-            cache_outcomes["browser"] = cache_outcome
-            if not browser_fetch.error:
+            if browser_fetch is None:
+                continue_browser_fallback = False
+            else:
+                continue_browser_fallback = True
+                cache_outcomes["browser"] = cache_outcome
+            if continue_browser_fallback and not browser_fetch.error:
                 fetch = browser_fetch
                 findings = self._detect(fetch, "browser", target)
-            elif fetch is None:
+            elif continue_browser_fallback and fetch is None:
                 fetch = browser_fetch
             if (
+                continue_browser_fallback
+                and browser_fetch is not None
+                and
                 self._should_warn_browser_fallback_failed(
                     fallback_reason,
                     browser_fetch,
@@ -196,6 +209,37 @@ class ScanRunner:
             f"elapsed={time.perf_counter() - provider_started:.3f}s",
         )
         return findings
+
+    async def _browser_fallback_fetch(
+        self,
+        raw_target: str,
+        target: str,
+        fallback_reason: str | None,
+        requests_fetch: FetchResult | None,
+        auto_observations: list[Observation],
+    ) -> tuple[FetchResult | None, CacheOutcome]:
+        if self.args.mode == "auto" and requests_fetch is not None and requests_fetch.cached:
+            cached_browser, cache_outcome = self.fetch_pipeline.get_cached("browser", target)
+            if cached_browser is not None:
+                self.diagnostics.log(
+                    1,
+                    f"auto using cached browser fallback: target={target} reason={fallback_reason}",
+                )
+                return cached_browser, cache_outcome
+            assert fallback_reason is not None
+            self.diagnostics.log(
+                1,
+                f"auto skipped live browser fallback: target={target} "
+                f"reason={fallback_reason} requests_cached=true browser_cache=miss",
+            )
+            auto_observations.append(cached_auto_fallback_skipped_observation(fallback_reason))
+            return None, CacheOutcome(lookup="miss")
+
+        return await self.fetch_pipeline.fetch(
+            "browser",
+            raw_target,
+            target,
+        )
 
 
 def scan_target(

@@ -169,6 +169,30 @@ class FetchPipeline:
             self._apply_cache_disposition(cache, target, mode, fresh_fetch, identity, outcome)
             return fresh_fetch, outcome
 
+    def get_cached(self, mode: str, target: str) -> tuple[FetchResult | None, CacheOutcome]:
+        identity = fetch_identity(self.args, mode)
+        outcome = CacheOutcome(lookup="miss")
+        with ResponseCache(self.args.db) as cache:
+            cached_fetch = cache.get(
+                target,
+                mode,
+                self.args.proxy,
+                self.args.cache_ttl,
+                identity,
+            )
+        if cached_fetch is None:
+            self.diagnostics.log(3, f"cache probe miss: target={target} mode={mode}")
+            return None, outcome
+        outcome.lookup = "hit"
+        primary = cached_fetch.primary_resource
+        self.diagnostics.log(
+            3,
+            f"cache probe hit: target={target} mode={mode} "
+            f"resource_created_at={primary.cache_created_at} "
+            f"resource_updated_at={primary.cache_updated_at}",
+        )
+        return cached_fetch, outcome
+
     def _fetch_null(self, raw_target: str, target: str) -> tuple[FetchResult, CacheOutcome]:
         outcome = CacheOutcome(
             lookup="refresh" if self.args.refresh else "miss",
@@ -179,31 +203,30 @@ class FetchPipeline:
             self.diagnostics.log(3, f"null cache bypass refresh: target={target}")
             return self._null_cache_miss(raw_target, target), outcome
 
-        with ResponseCache(self.args.db) as cache:
-            for cached_mode in ("requests", "browser"):
-                identity = fetch_identity(self.args, cached_mode)
-                cached_fetch = cache.get(
-                    target,
-                    cached_mode,
-                    self.args.proxy,
-                    self.args.cache_ttl,
-                    identity,
-                )
-                if cached_fetch:
-                    outcome.lookup = "hit"
-                    outcome.stored = None
-                    outcome.reason = None
-                    primary = cached_fetch.primary_resource
-                    self.diagnostics.log(
-                        3,
-                        f"null cache hit: target={target} cached_mode={cached_mode} "
-                        f"resource_created_at={primary.cache_created_at} "
-                        f"resource_updated_at={primary.cache_updated_at}",
-                    )
-                    return replace(cached_fetch, mode="null"), outcome
+        requests_fetch, _ = self.get_cached("requests", target)
+        browser_fetch, _ = self.get_cached("browser", target)
+        cached_fetch = self._preferred_null_fetch(requests_fetch, browser_fetch)
+        if cached_fetch:
+            outcome.lookup = "hit"
+            outcome.stored = None
+            outcome.reason = None
+            self.diagnostics.log(
+                3,
+                f"null cache selected: target={target} cached_mode={cached_fetch.mode}",
+            )
+            return replace(cached_fetch, mode="null"), outcome
 
         self.diagnostics.log(3, f"null cache miss: target={target}")
         return self._null_cache_miss(raw_target, target), outcome
+
+    @staticmethod
+    def _preferred_null_fetch(
+        requests_fetch: FetchResult | None,
+        browser_fetch: FetchResult | None,
+    ) -> FetchResult | None:
+        if browser_fetch and browser_fetch.status is not None and 200 <= browser_fetch.status < 300:
+            return browser_fetch
+        return requests_fetch or browser_fetch
 
     def _null_cache_miss(self, raw_target: str, target: str) -> FetchResult:
         error = "null fetch mode cache miss; no cached fetch observation for target"

@@ -83,3 +83,14 @@ def browser_fallback_failed_observation(
             f"(reason={fallback_reason}); browser also failed: {error}"
         ),
     )
+
+
+def cached_auto_fallback_skipped_observation(fallback_reason: str) -> Observation:
+    return Observation(
+        kind="auto",
+        name="browser_fallback_skipped",
+        value=(
+            "requests result was served from cache and browser cache is missing; "
+            f"skipped live browser fallback (reason={fallback_reason})"
+        ),
+    )

@@ -611,6 +611,83 @@ class CliCacheTests(unittest.TestCase):
             result["observations"],
         )
 
+    def test_auto_mode_cached_requests_does_not_live_fetch_missing_browser_fallback(self):
+        with TemporaryDirectory() as tmpdir:
+            db = Path(tmpdir) / "results.db"
+            blocked = FetchResult(
+                input="example.com",
+                url="https://example.com",
+                final_url="https://example.com",
+                status=403,
+                headers={"server": "cloudflare", "cf-ray": "abc"},
+                cookies={},
+                body="Just a moment",
+                mode="requests",
+            )
+            with patch("tech_scan.fetch_pipeline.fetch_requests", return_value=blocked):
+                scan_target("example.com", args_for(db, mode="requests"), ["builtin"], ["builtin"])
+
+            self.sanity_mock.reset_mock()
+            with patch("tech_scan.fetch_pipeline.fetch_browser_async") as browser_mock:
+                result = scan_target("example.com", args_for(db, mode="auto"), ["builtin"], ["builtin"])
+
+        self.assertEqual(result["mode"], "requests")
+        self.assertTrue(result["cached"])
+        self.assertEqual(result["cache_lookup"], "hit")
+        self.assertIn(
+            {
+                "kind": "auto",
+                "name": "browser_fallback_skipped",
+                "value": (
+                    "requests result was served from cache and browser cache is missing; "
+                    "skipped live browser fallback (reason=cdn-waf-blocking-status-403)"
+                ),
+            },
+            result["observations"],
+        )
+        self.sanity_mock.assert_not_called()
+        browser_mock.assert_not_called()
+
+    def test_auto_mode_cached_requests_uses_cached_browser_fallback(self):
+        with TemporaryDirectory() as tmpdir:
+            db = Path(tmpdir) / "results.db"
+            blocked = FetchResult(
+                input="example.com",
+                url="https://example.com",
+                final_url="https://example.com",
+                status=403,
+                headers={"server": "cloudflare", "cf-ray": "abc"},
+                cookies={},
+                body="Just a moment",
+                mode="requests",
+            )
+            rendered = FetchResult(
+                input="example.com",
+                url="https://example.com",
+                final_url="https://example.com",
+                status=200,
+                headers={"server": "nginx"},
+                cookies={},
+                body="rendered",
+                mode="browser",
+            )
+            with patch("tech_scan.fetch_pipeline.fetch_requests", return_value=blocked):
+                scan_target("example.com", args_for(db, mode="requests"), ["builtin"], ["builtin"])
+            with patch("tech_scan.fetch_pipeline.fetch_browser_async", return_value=rendered):
+                scan_target("example.com", args_for(db, mode="browser"), ["builtin"], ["builtin"])
+
+            self.sanity_mock.reset_mock()
+            with patch("tech_scan.fetch_pipeline.fetch_browser_async") as browser_mock:
+                result = scan_target("example.com", args_for(db, mode="auto"), ["builtin"], ["builtin"])
+
+        self.assertEqual(result["mode"], "browser")
+        self.assertTrue(result["cached"])
+        self.assertEqual(result["cache_lookup"], "hit")
+        self.assertEqual(result["status"], 200)
+        self.assertEqual(result["technologies"][0]["name"], "nginx")
+        self.sanity_mock.assert_not_called()
+        browser_mock.assert_not_called()
+
     def test_top_level_error_traceback_depends_on_verbosity(self):
         def fake_fetch_requests(*args, **kwargs):
             error = "connection failed"
