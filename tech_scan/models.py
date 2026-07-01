@@ -7,6 +7,7 @@ from typing import Any
 DIM_CDN_WAF_SERVER = "cdn_waf_server"
 DIM_FRONTEND = "frontend_framework"
 DIM_BACKEND = "backend_framework"
+DIM_CMS = "cms"
 
 
 @dataclass(frozen=True)

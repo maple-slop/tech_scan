@@ -9,6 +9,7 @@ from typing import Any
 from tech_scan.models import (
     DIM_BACKEND,
     DIM_CDN_WAF_SERVER,
+    DIM_CMS,
     DIM_FRONTEND,
     FetchResult,
     Finding,
@@ -32,6 +33,7 @@ WAPPALYZER_DIMENSION_MAP = {
     "ui frameworks": DIM_FRONTEND,
     "web frameworks": DIM_BACKEND,
     "programming languages": DIM_BACKEND,
+    "cms": DIM_CMS,
 }
 
 
@@ -46,6 +48,7 @@ WAPPALYZER_CATEGORY_ID_MAP = {
     23: DIM_CDN_WAF_SERVER,
     64: DIM_CDN_WAF_SERVER,
     67: DIM_CDN_WAF_SERVER,
+    1: DIM_CMS,
 }
 
 

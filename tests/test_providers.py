@@ -152,6 +152,56 @@ class ProviderTests(unittest.TestCase):
 
         self.assertLessEqual({"Cloudflare", "Next.js", "React"}, names(detected))
 
+    def test_builtin_detects_common_cms_markers(self):
+        fixtures = [
+            ("WordPress", make_fetch(body='<link rel="stylesheet" href="/wp-content/themes/app/style.css">')),
+            ("Drupal", make_fetch(headers={"X-Generator": "Drupal 10 (https://www.drupal.org)"})),
+            ("Joomla", make_fetch(body='<meta name="generator" content="Joomla! - Open Source Content Management">')),
+            ("TYPO3", make_fetch(body='<script src="/typo3conf/ext/site/Resources/Public/app.js"></script>')),
+            ("Liferay", make_fetch(headers={"Liferay-Portal": "Liferay Digital Experience Platform 7.4"})),
+            ("Magento", make_fetch(body='<script type="text/x-magento-init">{"*":{}}</script>')),
+            ("Shopware", make_fetch(body='<meta name="application-name" content="Shopware">')),
+            ("Adobe Experience Manager", make_fetch(body='<script src="/etc.clientlibs/site/clientlibs/clientlib-base.js"></script>')),
+            ("Sitecore", make_fetch(cookies={"SC_ANALYTICS_GLOBAL_COOKIE": "abc"})),
+            ("Umbraco", make_fetch(headers={"X-Umbraco-Version": "13.0.0"})),
+            ("Ghost", make_fetch(body='<meta name="generator" content="Ghost 5.0">')),
+            ("Webflow", make_fetch(body='<html data-wf-site="abc" data-wf-page="def"></html>')),
+            ("Craft CMS", make_fetch(headers={"X-Powered-By": "Craft CMS"})),
+            ("Sitefinity", make_fetch(body="<script>Telerik.Sitefinity = {};</script>")),
+        ]
+
+        for expected, fetch in fixtures:
+            with self.subTest(expected=expected):
+                by_name = {finding.name: finding for finding in BuiltinProvider().detect(fetch)}
+
+                self.assertIn(expected, by_name)
+                self.assertEqual(by_name[expected].dimension, "cms")
+
+    def test_builtin_cms_rules_ignore_plain_prose(self):
+        fetch = make_fetch(
+            body=(
+                "<title>WordPress Drupal Joomla TYPO3 Liferay Magento Shopware</title>"
+                "<main>Comparing Adobe Experience Manager, Sitecore, Umbraco, Ghost, "
+                "Webflow, Craft CMS, and Sitefinity without runtime markers.</main>"
+            )
+        )
+
+        detected = BuiltinProvider().detect(fetch)
+        cms_names = {
+            finding.name
+            for finding in detected
+            if finding.dimension == "cms"
+        }
+
+        self.assertEqual(cms_names, set())
+
+    def test_builtin_magento_ignores_contentful_migration_slug(self):
+        fetch = make_fetch(
+            body='"MigrationMagento_WouterDenOtter",{"fields":{"quote":"migration story"}}'
+        )
+
+        self.assertNotIn("Magento", names(BuiltinProvider().detect(fetch)))
+
     def test_builtin_detects_frontend_markers_from_script_body(self):
         document = ResourceObservation(
             id="document:0",
@@ -854,6 +904,12 @@ class ProviderTests(unittest.TestCase):
                 detected = BuiltinProvider().detect(make_fetch(url=url))
                 self.assertIn(expected, names(detected))
 
+    def test_asp_suffix_does_not_identify_aspnet(self):
+        detected = BuiltinProvider().detect(make_fetch(url="https://example.com/default.asp"))
+
+        self.assertIn("Classic ASP", names(detected))
+        self.assertNotIn("ASP.NET", names(detected))
+
     def test_aspnet_web_forms_markers_are_strong_evidence(self):
         fetch = make_fetch(
             url="https://example.com/default.aspx",
@@ -1110,6 +1166,33 @@ class ProviderTests(unittest.TestCase):
         detected = provider.detect(make_fetch(body="custom-framework analytics-tool"))
 
         self.assertEqual(names(detected), {"Custom Framework"})
+
+    def test_wappalyzergo_provider_maps_cms_category(self):
+        provider = WappalyzerGoProvider(
+            {
+                "apps": {
+                    "WordPress": {
+                        "cats": [1],
+                        "meta": {"generator": "^wordpress"},
+                    },
+                    "Analytics Tool": {"cats": ["Analytics"], "html": "analytics-tool"},
+                }
+            }
+        )
+
+        detected = provider.detect(
+            make_fetch(
+                body=(
+                    '<meta name="generator" content="WordPress 6.0">'
+                    "analytics-tool"
+                )
+            )
+        )
+        by_name = {finding.name: finding for finding in detected}
+
+        self.assertIn("WordPress", by_name)
+        self.assertEqual(by_name["WordPress"].dimension, "cms")
+        self.assertNotIn("Analytics Tool", by_name)
 
     def test_wappalyzergo_merges_with_builtin(self):
         builtin = BuiltinProvider().detect(make_fetch(headers={"Server": "Apache"}))

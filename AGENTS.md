@@ -4,13 +4,14 @@
 
 `tech_scan` is a Python CLI for bug bounty technology triage. It reads domains or URLs from stdin, fetches each site, detects familiar web technologies, and prints either human-readable output or JSON Lines.
 
-Current detection scope is intentionally focused on three dimensions:
+Current detection scope is intentionally focused on four dimensions:
 
 - `cdn_waf_server`
 - `frontend_framework`
 - `backend_framework`
+- `cms`
 
-Do not expand into analytics, payment, auth, ads, or broad CMS-style reporting unless the user explicitly asks.
+Do not expand into analytics, payment, auth, or ads unless the user explicitly asks.
 
 This is early-stage software. Prefer clean internal design over backward compatibility by default, including breaking Python import compatibility, cache schema compatibility, or CLI behavior when it materially simplifies the project. When doing so, explicitly tell the user what compatibility is being broken and why.
 
@@ -143,7 +144,7 @@ Keep builtin rules conservative and evidence-driven. Each finding should include
 
 `wappalyzergo` uses vendored `projectdiscovery/wappalyzergo` fingerprint JSON and must not shell out to subprocess wrappers. Keep the vendored upstream license and attribution beside the data. Do not expose user-supplied Wappalyzer JSON as a selectable provider; public provider choices are only `builtin`, `wappalyzergo`, and `all`.
 
-Builtin may borrow high-signal Wappalyzer-style signatures only when they fit existing dimensions and can produce clear evidence. Keep ambiguous or broad coverage in `wappalyzergo`; do not bulk-import fingerprints or add broad CMS/payment/analytics/auth/ad reporting to builtin.
+Builtin may borrow high-signal Wappalyzer-style signatures only when they fit existing dimensions and can produce clear evidence. Keep ambiguous or broad coverage in `wappalyzergo`; do not bulk-import fingerprints or add payment/analytics/auth/ad reporting to builtin.
 
 Do not add public imports for internal provider or fetcher helper APIs in package `__init__.py` files. Import implementation helpers from their owning modules, such as `tech_scan.url_policy`, `tech_scan.html_extract`, `tech_scan.fetchers.auto`, or `tech_scan.providers.wappalyzer_engine`.
 
@@ -187,7 +188,7 @@ echo 'https://example.com' | make smoke-browser
 
 Add or update tests for every behavior change. Prefer fake Playwright/browser objects for unit tests instead of requiring real browser binaries in the test suite.
 
-`tests/live_website_references.json` is a weak live-smoke reference list, not a deterministic unit-test fixture. It records currently reachable public websites that are expected to expose selected frontend/backend framework signals, plus the last observed builtin scan result. Some CMS and traditional platform entries are intentionally out of the current builtin dimensions and exist as future coverage/reference material, not as required detector output. Use it for manual coverage checks, rule discovery, and regression investigation. Do not make CI fail solely because one of these live sites changes, blocks scanners, redirects differently, or stops exposing a framework marker.
+`tests/live_website_references.json` is a weak live-smoke reference list, not a deterministic unit-test fixture. It records currently reachable public websites that are expected to expose selected frontend/backend/CMS signals, plus the last observed builtin scan result. Some entries are intentionally weak references for future rule discovery rather than required detector output. Use it for manual coverage checks, rule discovery, and regression investigation. Do not make CI fail solely because one of these live sites changes, blocks scanners, redirects differently, or stops exposing a framework marker.
 
 Protect these behaviors with tests when touched:
 

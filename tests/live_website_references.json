@@ -587,7 +587,6 @@
           "status": 200,
           "mode": "requests",
           "detected": [
-            "ASP.NET",
             "Classic ASP",
             "PHP"
           ]
@@ -602,7 +601,6 @@
           "status": 200,
           "mode": "requests",
           "detected": [
-            "ASP.NET",
             "Classic ASP",
             "PHP"
           ]
@@ -807,41 +805,44 @@
       {
         "url": "https://wordpress.org",
         "source_url": "https://wordpress.org/",
-        "source_note": "Official WordPress site; CMS detection is out of current builtin scope, but current live page exposes PHP/nginx signals.",
+        "source_note": "Official WordPress site; current live page exposes WordPress builtin evidence.",
         "last_builtin_scan": {
           "date": "2026-07-01",
           "status": 200,
           "mode": "requests",
           "detected": [
             "PHP",
-            "nginx"
+            "nginx",
+            "WordPress"
           ]
         }
       },
       {
         "url": "https://techcrunch.com",
         "source_url": "https://wpvip.com/",
-        "source_note": "Current live page exposes a raw WordPress VIP X-Powered-By observation; CMS detection is out of current builtin scope.",
+        "source_note": "Current live page exposes WordPress VIP and WordPress asset builtin evidence.",
         "last_builtin_scan": {
           "date": "2026-07-01",
           "status": 200,
           "mode": "requests",
           "detected": [
             "PHP",
-            "nginx"
+            "nginx",
+            "WordPress"
           ]
         }
       },
       {
         "url": "https://www.whitehouse.gov",
         "source_url": "https://wordpress.org/showcase/",
-        "source_note": "Listed in the official WordPress showcase; CMS detection is out of current builtin scope.",
+        "source_note": "Listed in the official WordPress showcase; current live page exposes WordPress asset builtin evidence.",
         "last_builtin_scan": {
           "date": "2026-07-01",
           "status": 200,
           "mode": "requests",
           "detected": [
-            "nginx"
+            "nginx",
+            "WordPress"
           ]
         }
       }
@@ -854,7 +855,7 @@
       {
         "url": "https://www.drupal.org",
         "source_url": "https://www.drupal.org/",
-        "source_note": "Official Drupal site; CMS detection is out of current builtin scope.",
+        "source_note": "Official Drupal site; weak reference because the current live page does not expose Drupal builtin evidence.",
         "last_builtin_scan": {
           "date": "2026-07-01",
           "status": 200,
@@ -867,7 +868,7 @@
       {
         "url": "https://www.acquia.com",
         "source_url": "https://new.drupal.org/case-studies",
-        "source_note": "Drupal ecosystem reference; current live page exposes X-Generator: Drupal 10 as a raw observation.",
+        "source_note": "Drupal ecosystem reference; current live page exposes Drupal builtin evidence.",
         "last_builtin_scan": {
           "date": "2026-07-01",
           "status": 200,
@@ -875,6 +876,7 @@
           "detected": [
             "Cloudflare",
             "Varnish",
+            "Drupal",
             "Alpine.js"
           ]
         }
@@ -888,7 +890,7 @@
       {
         "url": "https://www.liferay.com",
         "source_url": "https://www.liferay.com/products/dxp",
-        "source_note": "Official Liferay site; CMS/portal detection is out of current builtin scope, but current live page exposes Java signals.",
+        "source_note": "Official Liferay site; current live page exposes Liferay builtin evidence.",
         "last_builtin_scan": {
           "date": "2026-07-01",
           "status": 200,
@@ -896,6 +898,7 @@
           "detected": [
             "Java",
             "Cloudflare",
+            "Liferay",
             "React"
           ]
         }
@@ -903,7 +906,7 @@
       {
         "url": "https://liferay.dev",
         "source_url": "https://liferay.dev/",
-        "source_note": "Official Liferay developer site; current live page exposes Java and JSP builtin evidence.",
+        "source_note": "Official Liferay developer site; current live page exposes Java, JSP, and Liferay builtin evidence.",
         "last_builtin_scan": {
           "date": "2026-07-01",
           "status": 200,
@@ -911,6 +914,7 @@
           "detected": [
             "Java",
             "JSP",
+            "Liferay",
             "React"
           ]
         }
@@ -918,13 +922,14 @@
       {
         "url": "https://www.liferay.com/resources",
         "source_url": "https://www.liferay.com/resources",
-        "source_note": "Official Liferay resource hub; CMS/portal detection is out of current builtin scope.",
+        "source_note": "Official Liferay resource hub; current live page exposes Liferay builtin evidence.",
         "last_builtin_scan": {
           "date": "2026-07-01",
           "status": 200,
           "mode": "requests",
           "detected": [
             "Cloudflare",
+            "Liferay",
             "React"
           ]
         }
@@ -938,28 +943,30 @@
       {
         "url": "https://www.joomla.org",
         "source_url": "https://www.joomla.org/",
-        "source_note": "Official Joomla site; CMS detection is out of current builtin scope.",
+        "source_note": "Official Joomla site; current live page exposes Joomla builtin evidence.",
         "last_builtin_scan": {
           "date": "2026-07-01",
           "status": 200,
           "mode": "requests",
           "detected": [
             "Cloudflare",
-            "LiteSpeed Cache"
+            "LiteSpeed Cache",
+            "Joomla"
           ]
         }
       },
       {
         "url": "https://community.joomla.org",
         "source_url": "https://community.joomla.org/showcase/",
-        "source_note": "Official Joomla community/showcase site; CMS detection is out of current builtin scope.",
+        "source_note": "Official Joomla community/showcase site; current live page exposes Joomla builtin evidence.",
         "last_builtin_scan": {
           "date": "2026-07-01",
           "status": 200,
           "mode": "requests",
           "detected": [
             "Cloudflare",
-            "LiteSpeed Cache"
+            "LiteSpeed Cache",
+            "Joomla"
           ]
         }
       }
@@ -972,7 +979,7 @@
       {
         "url": "https://www.typo3.org",
         "source_url": "https://typo3.org/",
-        "source_note": "Official TYPO3 site; CMS detection is out of current builtin scope.",
+        "source_note": "Official TYPO3 site; weak reference because the current redirect response does not expose TYPO3 builtin evidence.",
         "last_builtin_scan": {
           "date": "2026-07-01",
           "status": 301,
@@ -985,26 +992,28 @@
       {
         "url": "https://typo3.com",
         "source_url": "https://typo3.com/",
-        "source_note": "Official TYPO3 commercial site; CMS detection is out of current builtin scope.",
+        "source_note": "Official TYPO3 commercial site; current live page exposes TYPO3 builtin evidence.",
         "last_builtin_scan": {
           "date": "2026-07-01",
           "status": 200,
           "mode": "requests",
           "detected": [
-            "Apache"
+            "Apache",
+            "TYPO3"
           ]
         }
       },
       {
         "url": "https://demo.typo3.org",
         "source_url": "https://demo.typo3.org/",
-        "source_note": "Official TYPO3 demo site; CMS detection is out of current builtin scope.",
+        "source_note": "Official TYPO3 demo site; current live page exposes TYPO3 builtin evidence.",
         "last_builtin_scan": {
           "date": "2026-07-01",
           "status": 200,
           "mode": "requests",
           "detected": [
-            "Apache"
+            "Apache",
+            "TYPO3"
           ]
         }
       }
@@ -1017,7 +1026,7 @@
       {
         "url": "https://www.shopware.com",
         "source_url": "https://www.shopware.com/",
-        "source_note": "Official Shopware site; ecommerce/CMS detection is out of current builtin scope, but the site is useful for frontend/server signal regressions.",
+        "source_note": "Official Shopware site; current live page exposes Shopware builtin evidence.",
         "last_builtin_scan": {
           "date": "2026-07-01",
           "status": 200,
@@ -1025,6 +1034,7 @@
           "detected": [
             "nginx",
             "Varnish",
+            "Shopware",
             "Nuxt",
             "Vue.js"
           ]
@@ -1039,7 +1049,7 @@
       {
         "url": "https://magento.com",
         "source_url": "https://business.adobe.com/products/magento/magento-commerce.html",
-        "source_note": "Official Magento/Adobe Commerce redirecting entry point; ecommerce/CMS detection is out of current builtin scope.",
+        "source_note": "Official Magento/Adobe Commerce redirecting entry point; weak reference because the current redirect response does not expose Magento builtin evidence.",
         "last_builtin_scan": {
           "date": "2026-07-01",
           "status": 301,
@@ -1052,12 +1062,73 @@
       {
         "url": "https://www.adobe.com",
         "source_url": "https://business.adobe.com/products/magento/magento-commerce.html",
-        "source_note": "Adobe product/reference site; ecommerce/CMS detection is out of current builtin scope.",
+        "source_note": "Adobe product/reference site; weak reference because the current live page does not expose Magento builtin evidence.",
         "last_builtin_scan": {
           "date": "2026-07-01",
           "status": 200,
           "mode": "requests",
           "detected": []
+        }
+      }
+    ]
+  },
+  {
+    "technology": "Adobe Experience Manager",
+    "dimension": "cms",
+    "references": [
+      {
+        "url": "https://experienceleague.adobe.com",
+        "source_url": "https://experienceleague.adobe.com/",
+        "source_note": "Adobe Experience League reference; current live page exposes Adobe Experience Manager builtin evidence.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 200,
+          "mode": "requests",
+          "detected": [
+            "Cloudflare",
+            "Adobe Experience Manager"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "technology": "Webflow",
+    "dimension": "cms",
+    "references": [
+      {
+        "url": "https://webflow.com",
+        "source_url": "https://webflow.com/",
+        "source_note": "Official Webflow site; current live page exposes Webflow builtin evidence.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 200,
+          "mode": "requests",
+          "detected": [
+            "Cloudflare",
+            "Webflow"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "technology": "Craft CMS",
+    "dimension": "cms",
+    "references": [
+      {
+        "url": "https://craftcms.com",
+        "source_url": "https://craftcms.com/",
+        "source_note": "Official Craft CMS site; current live page exposes Craft CMS builtin evidence.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 200,
+          "mode": "requests",
+          "detected": [
+            "Cloudflare",
+            "Craft CMS",
+            "jQuery"
+          ]
         }
       }
     ]
