@@ -4,13 +4,24 @@ import argparse
 import asyncio
 import queue
 import threading
+from dataclasses import dataclass
+from collections.abc import Mapping
 from typing import Any, Callable
 
 from .fetchers.browser import AsyncBrowserPool
+from .models import ScanResult
 from .scanner import scan_input, scan_input_async
 
 
-ResultPrinter = Callable[[dict[str, Any]], None]
+SchedulerResult = ScanResult | Mapping[str, Any]
+ResultPrinter = Callable[[SchedulerResult], None]
+
+
+@dataclass(frozen=True)
+class WorkerMessage:
+    error: BaseException | None = None
+    result: SchedulerResult | None = None
+    done: bool = False
 
 
 def _log_interrupted(args: argparse.Namespace) -> None:
@@ -19,14 +30,21 @@ def _log_interrupted(args: argparse.Namespace) -> None:
         diagnostics.log(1, "scan interrupted; cancelling pending work")
 
 
-def _print_ready(args: argparse.Namespace, result: dict[str, Any], print_result: ResultPrinter) -> None:
+def _result_json(result: SchedulerResult) -> dict[str, Any]:
+    if isinstance(result, ScanResult):
+        return result.to_json()
+    return dict(result)
+
+
+def _print_ready(args: argparse.Namespace, result: SchedulerResult, print_result: ResultPrinter) -> None:
+    result_json = _result_json(result)
     diagnostics = getattr(args, "_diagnostics", None)
     if diagnostics:
         diagnostics.log(
             3,
-            f"result ready: target={result.get('url')} "
-            f"cached={str(bool(result.get('cached'))).lower()} "
-            f"providers={','.join(result.get('providers') or [])}",
+            f"result ready: target={result_json.get('url')} "
+            f"cached={str(bool(result_json.get('cached'))).lower()} "
+            f"providers={','.join(result_json.get('providers') or [])}",
         )
     print_result(result)
 
@@ -40,7 +58,7 @@ def run_requests(
 ) -> int:
     stop_event = threading.Event()
     task_queue: queue.Queue[str | None] = queue.Queue()
-    result_queue: queue.Queue[tuple[BaseException | None, dict[str, Any] | None, bool]] = queue.Queue()
+    result_queue: queue.Queue[WorkerMessage] = queue.Queue()
 
     for target in targets:
         task_queue.put(target)
@@ -60,11 +78,11 @@ def run_requests(
                     providers_requested,
                     provider_names,
                     None,
-                    emit_result=lambda result: result_queue.put((None, result, False)),
+                    emit_result=lambda result: result_queue.put(WorkerMessage(result=result)),
                 )
-                result_queue.put((None, None, True))
+                result_queue.put(WorkerMessage(done=True))
             except BaseException as exc:
-                result_queue.put((exc, None, True))
+                result_queue.put(WorkerMessage(error=exc, done=True))
 
     workers = [
         threading.Thread(target=worker, name=f"tech-scan-request-{index}", daemon=True)
@@ -77,16 +95,16 @@ def run_requests(
     try:
         while completed < len(targets):
             try:
-                error, result, done = result_queue.get(timeout=0.1)
+                message = result_queue.get(timeout=0.1)
             except queue.Empty:
                 continue
-            if error is not None:
-                if isinstance(error, KeyboardInterrupt):
-                    raise error
-                raise error
-            if result is not None:
-                _print_ready(args, result, print_result)
-            if done:
+            if message.error is not None:
+                if isinstance(message.error, KeyboardInterrupt):
+                    raise message.error
+                raise message.error
+            if message.result is not None:
+                _print_ready(args, message.result, print_result)
+            if message.done:
                 completed += 1
     except KeyboardInterrupt:
         _log_interrupted(args)
@@ -103,7 +121,7 @@ async def run_browser_or_auto(
     print_result: ResultPrinter,
 ) -> int:
     semaphore = asyncio.Semaphore(args.concurrency)
-    tasks: list[asyncio.Task[list[dict[str, Any]]]] = []
+    tasks: list[asyncio.Task[None]] = []
 
     async with AsyncBrowserPool(
         args.proxy,

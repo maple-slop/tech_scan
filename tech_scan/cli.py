@@ -9,6 +9,7 @@ from pathlib import Path
 from .cache import default_db_path
 from .cli_config import ca_bundle_env_default
 from .diagnostics import Diagnostics
+from .models import ScanResult
 from .output import format_result
 from .scheduler import run_browser_or_auto, run_requests
 
@@ -146,7 +147,7 @@ def resolve_provider_names(
     return sorted(set(requested))
 
 
-def print_result(result: dict[str, Any], output: str, color: bool) -> None:
+def print_result(result: ScanResult, output: str, color: bool) -> None:
     print(format_result(result, output, color), flush=True)
     if output == "human":
         print(flush=True)

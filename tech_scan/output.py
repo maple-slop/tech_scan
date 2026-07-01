@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from typing import Any
 from urllib.parse import urlparse
+
+from .models import ScanResult
 
 
 RESET = "\033[0m"
@@ -23,12 +26,22 @@ def colorize(text: str, color: str, enabled: bool) -> str:
     return f"{COLORS[color]}{text}{RESET}"
 
 
-def format_jsonl(result: dict[str, Any]) -> str:
-    return json.dumps(result, sort_keys=True)
+OutputResult = ScanResult | Mapping[str, Any]
 
 
-def origin_display_url(result: dict[str, Any]) -> str:
-    for value in [result.get("url"), result.get("input")]:
+def result_to_json(result: OutputResult) -> dict[str, Any]:
+    if isinstance(result, ScanResult):
+        return result.to_json()
+    return dict(result)
+
+
+def format_jsonl(result: OutputResult) -> str:
+    return json.dumps(result_to_json(result), sort_keys=True)
+
+
+def origin_display_url(result: OutputResult) -> str:
+    result_json = result_to_json(result)
+    for value in [result_json.get("url"), result_json.get("input")]:
         if not value:
             continue
         text = str(value)
@@ -94,13 +107,14 @@ def evidence_color(evidence: object) -> str:
     return "yellow"
 
 
-def format_human(result: dict[str, Any], color: bool = True) -> str:
-    technologies = result.get("technologies") or []
+def format_human(result: OutputResult, color: bool = True) -> str:
+    result_json = result_to_json(result)
+    technologies = result_json.get("technologies") or []
     tech_names = [str(tech.get("name", "")) for tech in technologies if tech.get("name")]
     summary = ", ".join(tech_names) if tech_names else "no technologies"
-    display_url = origin_display_url(result)
-    status = result.get("status")
-    error = result.get("error")
+    display_url = origin_display_url(result_json)
+    status = result_json.get("status")
+    error = result_json.get("error")
     status_text = str(status) if status is not None else "no status"
     status_style = status_color(status, error)
 
@@ -115,22 +129,22 @@ def format_human(result: dict[str, Any], color: bool = True) -> str:
     ]
     lines.extend(
         [
-            f"  input: {result.get('input')}",
-            f"  url: {result.get('url')}",
-            f"  final_url: {result.get('final_url')}",
+            f"  input: {result_json.get('input')}",
+            f"  url: {result_json.get('url')}",
+            f"  final_url: {result_json.get('final_url')}",
             f"  status: {colorize(status_text, status_style, color)}",
-            f"  mode: {result.get('mode')}",
-            f"  providers: {', '.join(result.get('providers') or [])}",
-            f"  cached: {result.get('cached')}",
-            f"  cache_lookup: {result.get('cache_lookup')}",
-            f"  cache_stored: {result.get('cache_stored')}",
-            f"  cache_reason: {result.get('cache_reason')}",
-            f"  cache_created_at: {result.get('cache_created_at')}",
-            f"  cache_updated_at: {result.get('cache_updated_at')}",
+            f"  mode: {result_json.get('mode')}",
+            f"  providers: {', '.join(result_json.get('providers') or [])}",
+            f"  cached: {result_json.get('cached')}",
+            f"  cache_lookup: {result_json.get('cache_lookup')}",
+            f"  cache_stored: {result_json.get('cache_stored')}",
+            f"  cache_reason: {result_json.get('cache_reason')}",
+            f"  cache_created_at: {result_json.get('cache_created_at')}",
+            f"  cache_updated_at: {result_json.get('cache_updated_at')}",
             f"  error: {colorize(str(error), 'red', color) if error else None}",
         ]
     )
-    observations = result.get("observations") or []
+    observations = result_json.get("observations") or []
     if observations:
         lines.append("  observations:")
         for item in observations:
@@ -164,7 +178,7 @@ def format_human(result: dict[str, Any], color: bool = True) -> str:
     return "\n".join(lines)
 
 
-def format_result(result: dict[str, Any], output: str, color: bool) -> str:
+def format_result(result: OutputResult, output: str, color: bool) -> str:
     if output == "jsonl":
         return format_jsonl(result)
     return format_human(result, color=color)

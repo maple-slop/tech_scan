@@ -10,7 +10,7 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from tech_scan.cli import main, parse_args, resolve_provider_names
-from tech_scan.models import FetchResult
+from tech_scan.models import FetchResult, ScanResult
 from tech_scan.output import (
     confidence_color,
     evidence_color,
@@ -21,7 +21,7 @@ from tech_scan.output import (
 from tech_scan.sanity import SanityResult
 
 
-RESULT = {
+RESULT_JSON = {
     "input": "example.com",
     "url": "https://example.com",
     "final_url": "https://example.com",
@@ -47,6 +47,8 @@ RESULT = {
     "error": None,
 }
 
+RESULT = ScanResult.from_json(RESULT_JSON)
+
 
 class OutputTests(unittest.TestCase):
     def wait_for_stdout_lines(self, stdout, count, timeout=5):
@@ -59,7 +61,7 @@ class OutputTests(unittest.TestCase):
         return stdout.getvalue().splitlines()
 
     def test_jsonl_format_matches_sorted_json_dump(self):
-        self.assertEqual(format_jsonl(RESULT), json.dumps(RESULT, sort_keys=True))
+        self.assertEqual(format_jsonl(RESULT), json.dumps(RESULT.to_json(), sort_keys=True))
 
     def test_human_format_includes_all_top_level_fields(self):
         output = format_human(RESULT, color=False)
@@ -94,13 +96,13 @@ class OutputTests(unittest.TestCase):
         self.assertIn("\033[", output)
 
     def test_human_format_reports_no_technologies(self):
-        result = dict(RESULT)
+        result = RESULT.to_json()
         result["technologies"] = []
 
         self.assertIn("technologies: none", format_human(result, color=False))
 
     def test_human_format_includes_raw_observations(self):
-        result = dict(RESULT)
+        result = RESULT.to_json()
         result["observations"] = [
             {"kind": "header", "name": "Server", "value": "WeirdServer/9.9"},
             {"kind": "header", "name": "X-Powered-By", "value": "SomethingCustom"},
@@ -940,7 +942,7 @@ class OutputTests(unittest.TestCase):
         self.assertNotIn("Traceback", stderr.getvalue())
 
     def test_human_first_line_uses_origin_not_redirected_url(self):
-        result = dict(RESULT)
+        result = RESULT.to_json()
         result["url"] = "https://example.com/some/long/path?token=abc"
 
         output = format_human(result, color=False)
@@ -968,7 +970,7 @@ class OutputTests(unittest.TestCase):
         self.assertEqual(evidence_color("php url suffix"), "dim")
 
     def test_human_evidence_lines_use_strength_colors(self):
-        result = dict(RESULT)
+        result = RESULT.to_json()
         result["technologies"] = [
             {
                 "name": "PHP",

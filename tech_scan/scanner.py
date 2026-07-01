@@ -13,14 +13,14 @@ from .fetchers.auto import (
 )
 from .fetch_pipeline import CacheOutcome, FetchPipeline
 from .fetchers.browser import AsyncBrowserPool
-from .models import FetchResult
+from .models import FetchResult, Observation, ScanResult, TechnologyResult
 from .normalize import expand_targets
 from .observations import browser_fallback_failed_observation, collect_header_observations
 from .providers import build_providers, merge_findings
 
 
 BlockingRunner = Callable[..., Awaitable[Any]]
-ResultEmitter = Callable[[dict[str, Any]], None]
+ResultEmitter = Callable[[ScanResult], None]
 
 
 async def run_blocking_in_thread(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
@@ -58,28 +58,17 @@ class ScanRunner:
         self,
         raw_target: str,
         emit_result: ResultEmitter | None = None,
-    ) -> list[dict[str, Any]]:
+    ) -> list[ScanResult]:
         raw_target = raw_target.strip()
         try:
             candidates = expand_targets(raw_target)
         except ValueError as exc:
-            result = {
-                "input": raw_target,
-                "url": None,
-                "final_url": None,
-                "status": None,
-                "mode": self.args.mode,
-                "providers": self.provider_names,
-                "cached": False,
-                "cache_lookup": "not_applicable",
-                "cache_stored": None,
-                "cache_reason": None,
-                "cache_created_at": None,
-                "cache_updated_at": None,
-                "observations": [],
-                "technologies": [],
-                "error": str(exc),
-            }
+            result = ScanResult.validation_error(
+                raw_target,
+                self.args.mode,
+                self.provider_names,
+                str(exc),
+            )
             if emit_result:
                 emit_result(result)
             return [result]
@@ -92,10 +81,10 @@ class ScanRunner:
                 emit_result(result)
         return results
 
-    async def scan_target_async(self, raw_target: str, target: str) -> dict[str, Any]:
+    async def scan_target_async(self, raw_target: str, target: str) -> ScanResult:
         findings = []
         fetch: FetchResult | None = None
-        auto_observations: list[dict[str, str]] = []
+        auto_observations: list[Observation] = []
         cache_outcomes: dict[str, CacheOutcome] = {}
 
         if self.args.mode in {"requests", "auto"}:
@@ -107,16 +96,8 @@ class ScanRunner:
             cache_outcomes["requests"] = cache_outcome
             findings = self._detect(fetch, "requests", target)
 
-        fallback_reason = (
-            browser_fallback_reason(fetch, len(findings))
-            if (
-                self.args.mode == "auto"
-                and fetch is not None
-                and not str(fetch.error or "").startswith("sanity check failed:")
-            )
-            else None
-        )
-        if self.args.mode == "browser" or (self.args.mode == "auto" and fallback_reason):
+        fallback_reason = self._fallback_reason(fetch, len(findings))
+        if self._should_run_browser(fallback_reason):
             if fallback_reason:
                 self.diagnostics.log(
                     1,
@@ -135,10 +116,10 @@ class ScanRunner:
             elif fetch is None:
                 fetch = browser_fetch
             if (
-                self.args.mode == "auto"
-                and fallback_reason
-                and is_cdn_waf_fallback_reason(fallback_reason)
-                and (browser_fetch.error or not has_useful_response(browser_fetch))
+                self._should_warn_browser_fallback_failed(
+                    fallback_reason,
+                    browser_fetch,
+                )
             ):
                 auto_observations.append(
                     browser_fallback_failed_observation(
@@ -153,23 +134,47 @@ class ScanRunner:
         observations = collect_header_observations(fetch, merged)
         observations.extend(auto_observations)
         cache_outcome = cache_outcomes.get(fetch.mode, CacheOutcome())
-        return {
-            "input": raw_target,
-            "url": fetch.url,
-            "final_url": fetch.final_url,
-            "status": fetch.status,
-            "mode": fetch.mode,
-            "providers": self.provider_names,
-            "cached": fetch.cached,
-            "cache_lookup": cache_outcome.lookup,
-            "cache_stored": cache_outcome.stored,
-            "cache_reason": cache_outcome.reason,
-            "cache_created_at": primary.cache_created_at,
-            "cache_updated_at": primary.cache_updated_at,
-            "observations": observations,
-            "technologies": [finding.to_json() for finding in merged],
-            "error": fetch.error,
-        }
+        return ScanResult(
+            input=raw_target,
+            url=fetch.url,
+            final_url=fetch.final_url,
+            status=fetch.status,
+            mode=fetch.mode,
+            providers=list(self.provider_names),
+            cached=fetch.cached,
+            cache_lookup=cache_outcome.lookup,
+            cache_stored=cache_outcome.stored,
+            cache_reason=cache_outcome.reason,
+            cache_created_at=primary.cache_created_at,
+            cache_updated_at=primary.cache_updated_at,
+            observations=observations,
+            technologies=[TechnologyResult.from_finding(finding) for finding in merged],
+            error=fetch.error,
+        )
+
+    def _fallback_reason(self, fetch: FetchResult | None, findings_count: int) -> str | None:
+        if self.args.mode != "auto" or fetch is None:
+            return None
+        if str(fetch.error or "").startswith("sanity check failed:"):
+            return None
+        return browser_fallback_reason(fetch, findings_count)
+
+    def _should_run_browser(self, fallback_reason: str | None) -> bool:
+        return self.args.mode == "browser" or (
+            self.args.mode == "auto" and fallback_reason is not None
+        )
+
+    def _should_warn_browser_fallback_failed(
+        self,
+        fallback_reason: str | None,
+        browser_fetch: FetchResult,
+    ) -> bool:
+        return (
+            self.args.mode == "auto"
+            and fallback_reason is not None
+            and is_cdn_waf_fallback_reason(fallback_reason)
+            and (browser_fetch.error is not None or not has_useful_response(browser_fetch))
+        )
 
     def _detect(self, fetch: FetchResult, mode: str, target: str):
         findings = []
@@ -192,7 +197,7 @@ def scan_target(
     providers_requested: list[str],
     provider_names: list[str],
     browser_session: AsyncBrowserPool | None = None,
-) -> dict[str, Any]:
+) -> ScanResult:
     return asyncio.run(ScanRunner(
         args,
         providers_requested,
@@ -209,7 +214,7 @@ def scan_input(
     provider_names: list[str],
     browser_session: AsyncBrowserPool | None = None,
     emit_result: ResultEmitter | None = None,
-) -> list[dict[str, Any]]:
+) -> list[ScanResult]:
     return asyncio.run(ScanRunner(
         args,
         providers_requested,
@@ -226,7 +231,7 @@ async def scan_input_async(
     provider_names: list[str],
     browser_session: AsyncBrowserPool | None = None,
     emit_result: ResultEmitter | None = None,
-) -> list[dict[str, Any]]:
+) -> list[ScanResult]:
     return await ScanRunner(
         args,
         providers_requested,

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from .models import Finding, FetchResult
+from .models import FetchResult, Finding, Observation
 
 
 HEADER_DISPLAY_NAMES = {
@@ -53,39 +53,33 @@ def header_display_name(name: str) -> str:
 def collect_header_observations(
     fetch: FetchResult,
     findings: Iterable[Finding],
-) -> list[dict[str, str]]:
+) -> list[Observation]:
     evidence = {
         item
         for finding in findings
         for item in finding.evidence
     }
-    observations: list[dict[str, str]] = []
+    observations: list[Observation] = []
     for name, value in fetch.headers.items():
         if not value or not _is_observed_header(name):
             continue
         display_name = header_display_name(name)
         if f"{display_name}: {value}" in evidence:
             continue
-        observations.append(
-            {
-                "kind": "header",
-                "name": display_name,
-                "value": value,
-            }
-        )
+        observations.append(Observation(kind="header", name=display_name, value=value))
     return observations
 
 
 def browser_fallback_failed_observation(
     fallback_reason: str,
     browser_fetch: FetchResult,
-) -> dict[str, str]:
+) -> Observation:
     error = browser_fetch.error or "no useful browser response"
-    return {
-        "kind": "auto",
-        "name": "browser_fallback_failed",
-        "value": (
+    return Observation(
+        kind="auto",
+        name="browser_fallback_failed",
+        value=(
             "requests looked blocked by CDN/WAF "
             f"(reason={fallback_reason}); browser also failed: {error}"
         ),
-    }
+    )
