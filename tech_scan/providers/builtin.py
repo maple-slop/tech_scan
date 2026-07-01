@@ -251,7 +251,7 @@ RULES = [
     )),
     Rule("Vue.js", DIM_FRONTEND, 75, global_detector(r"Vue")),
     Rule("Angular", DIM_FRONTEND, 80, any_detector(
-        body_detector(r"ng-version|ng-app", "angular script/html marker", True),
+        body_detector(r"<[^>]+\sng-version(?:[\s=>]|$)|<[^>]+\sng-app(?:[\s=>]|$)", "angular html attribute marker", True),
         script_body_detector(r"@angular/core|ng\.core|platformBrowserDynamic", "script body"),
         script_url_detector(r"angular(?:\.min)?\.js"),
     )),
@@ -268,7 +268,11 @@ RULES = [
         script_url_detector(r"alpine(?:\.min)?\.js"),
     )),
     Rule("Alpine.js", DIM_FRONTEND, 75, global_detector(r"Alpine")),
-    Rule("Astro", DIM_FRONTEND, 85, meta_detector("generator", r"^astro\s+v?[\d.]+", "astro generator meta")),
+    Rule("Astro", DIM_FRONTEND, 85, any_detector(
+        meta_detector("generator", r"^astro\s+v?[\d.]+", "astro generator meta"),
+        body_detector(r"astro-island|data-astro-cid-|/_astro/", "astro marker", True),
+        script_url_detector(r"/_astro/"),
+    )),
     Rule("Astro", DIM_FRONTEND, 75, global_detector(r"Astro")),
     Rule("Stimulus", DIM_FRONTEND, 80, body_detector(r"data-controller=", "stimulus controller marker")),
     Rule("htmx", DIM_FRONTEND, 80, any_detector(
@@ -279,17 +283,22 @@ RULES = [
     Rule("htmx", DIM_FRONTEND, 75, global_detector(r"^htmx$")),
     Rule("Polymer", DIM_FRONTEND, 80, any_detector(
         body_detector(r"<polymer-[^>]+|/polymer\.html", "polymer marker", True),
-        script_body_detector(r"Polymer\(|Polymer\.Element|customElements\.define", "script body"),
+        script_body_detector(r"Polymer\(|Polymer\.Element", "script body"),
         script_url_detector(r"polymer\.js"),
     )),
     Rule("Polymer", DIM_FRONTEND, 75, global_detector(r"Polymer")),
     Rule("Svelte", DIM_FRONTEND, 75, any_detector(
-        body_detector(r"__svelte|svelte-[a-z0-9]+", "svelte marker", True),
+        body_detector(r"__svelte", "svelte marker", True),
         script_body_detector(r"new\s+[A-Za-z_$][\w$]*\s*\(\s*\{\s*target:|svelte/internal", "script body"),
     )),
     Rule("Svelte", DIM_FRONTEND, 75, global_detector(r"Svelte")),
-    Rule("SvelteKit", DIM_FRONTEND, 85, meta_detector("generator", r"sveltekit", "sveltekit generator meta")),
+    Rule("SvelteKit", DIM_FRONTEND, 85, any_detector(
+        meta_detector("generator", r"sveltekit", "sveltekit generator meta"),
+        body_detector(r"/_app/immutable/|data-sveltekit-", "sveltekit marker", True),
+        script_url_detector(r"/_app/immutable/"),
+    )),
     Rule("Next.js", DIM_FRONTEND, 90, any_detector(
+        header_detector("x-powered-by", r"\bnext\.js\b"),
         body_detector(r"/_next/|__NEXT_DATA__|window\.__NEXT", "next.js marker", True),
         script_body_detector(r"__NEXT_DATA__|self\.__BUILD_MANIFEST|next/dist", "script body"),
         script_url_detector(r"/_next/"),
@@ -301,7 +310,11 @@ RULES = [
         script_url_detector(r"/_nuxt/"),
     )),
     Rule("Nuxt", DIM_FRONTEND, 75, global_detector(r"__NUXT")),
-    Rule("Remix", DIM_FRONTEND, 80, global_detector(r"__remixContext")),
+    Rule("Remix", DIM_FRONTEND, 80, any_detector(
+        body_detector(r"__remixContext|id=[\"']rmx-data[\"']|@remix-run", "remix marker", True),
+        script_body_detector(r"__remixContext|@remix-run", "script body"),
+        global_detector(r"__remixContext"),
+    )),
     Rule("Gatsby", DIM_FRONTEND, 85, any_detector(
         body_detector(r"___gatsby|gatsby-browser|gatsby-focus-wrapper", "gatsby marker", True),
         script_body_detector(r"___gatsby|gatsby-browser|webpackJsonp.*gatsby", "script body"),
@@ -419,6 +432,11 @@ IMPLIED_BACKENDS = {
 }
 
 
+IMPLIED_FRONTENDS = {
+    "SvelteKit": ("Svelte", 50),
+}
+
+
 def _same_host_embedded_urls(fetch: FetchResult, body: str) -> list[str]:
     base_url = fetch.final_url or fetch.url
     if not base_url:
@@ -494,6 +512,18 @@ class BuiltinProvider(Provider):
             findings[implied_key] = Finding(
                 name=implied_name,
                 dimension=DIM_BACKEND,
+                provider=self.name,
+                confidence=confidence,
+                evidence=[f"implied by: {source}"],
+            )
+        for source, (implied_name, confidence) in IMPLIED_FRONTENDS.items():
+            source_key = (source.lower(), DIM_FRONTEND)
+            implied_key = (implied_name.lower(), DIM_FRONTEND)
+            if source_key not in findings or implied_key in findings:
+                continue
+            findings[implied_key] = Finding(
+                name=implied_name,
+                dimension=DIM_FRONTEND,
                 provider=self.name,
                 confidence=confidence,
                 evidence=[f"implied by: {source}"],

@@ -21,3 +21,11 @@ BROWSER_HEADERS = {
     "Accept-Language": "en-US,en;q=0.9",
     "Priority": "u=0, i",
 }
+
+REQUESTS_HEADERS = {
+    **BROWSER_HEADERS,
+    # requests/urllib3 only decodes Brotli when an optional Brotli package is
+    # installed. Do not ask for br in requests mode or cached bodies can become
+    # compressed mojibake instead of parseable HTML.
+    "Accept-Encoding": "gzip, deflate",
+}

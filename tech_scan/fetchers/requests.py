@@ -12,7 +12,7 @@ from tech_scan.models import FetchResult, ResourceObservation
 from tech_scan.url_policy import redirect_target, same_hostname
 
 from .adblock import is_blocked_script_url
-from .headers import BROWSER_HEADERS
+from .headers import REQUESTS_HEADERS
 
 MAX_SCRIPT_RESOURCES = 25
 MAX_SCRIPT_BODY_BYTES = 1024 * 1024
@@ -53,7 +53,7 @@ def _get_with_same_host_redirects(
                 warnings.simplefilter("ignore", InsecureRequestWarning)
                 response = session.get(
                     current_url,
-                    headers=BROWSER_HEADERS,
+                    headers=REQUESTS_HEADERS,
                     timeout=timeout,
                     proxies=proxies,
                     allow_redirects=False,
@@ -62,7 +62,7 @@ def _get_with_same_host_redirects(
         else:
             response = session.get(
                 current_url,
-                headers=BROWSER_HEADERS,
+                headers=REQUESTS_HEADERS,
                 timeout=timeout,
                 proxies=proxies,
                 allow_redirects=False,

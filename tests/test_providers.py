@@ -281,19 +281,46 @@ class ProviderTests(unittest.TestCase):
 
     def test_builtin_detects_wappalyzer_informed_frontend_signatures(self):
         cases = [
+            (make_fetch(body='<app-root ng-version="17.0.0"></app-root>'), "Angular"),
             (make_fetch(body='<html ng-app="app"></html>'), "AngularJS"),
             (make_fetch(body='<div x-data="{open:false}"></div>'), "Alpine.js"),
             (make_fetch(body='<meta name="generator" content="Astro v4.0.0">'), "Astro"),
+            (make_fetch(body='<astro-island component-url="/_astro/Header.js"></astro-island>'), "Astro"),
             (make_fetch(body='<div data-controller="hello"></div>'), "Stimulus"),
             (make_fetch(body='<script src="/htmx.min.js"></script>'), "htmx"),
             (make_fetch(body='<link rel="import" href="/polymer.html">'), "Polymer"),
             (make_fetch(globals_=["__remixContext"]), "Remix"),
+            (make_fetch(body='<script type="application/json" id="rmx-data"></script>'), "Remix"),
             (make_fetch(body='<meta name="generator" content="SvelteKit">'), "SvelteKit"),
+            (make_fetch(body='<script type="module" src="/_app/immutable/start.js"></script>'), "SvelteKit"),
+            (make_fetch(headers={"X-Powered-By": "Next.js"}), "Next.js"),
         ]
 
         for fetch, expected in cases:
             with self.subTest(expected=expected):
                 self.assertIn(expected, names(BuiltinProvider().detect(fetch)))
+
+        sveltekit = BuiltinProvider().detect(
+            make_fetch(body='<script type="module" src="/_app/immutable/start.js"></script>')
+        )
+        self.assertLessEqual({"SvelteKit", "Svelte"}, names(sveltekit))
+
+    def test_builtin_frontend_signatures_avoid_common_docs_false_positives(self):
+        fetch = make_fetch_with_resources(
+            body='<main class="landing-version svelte-example">Current version</main>',
+            resources=[
+                script_resource(
+                    url="https://example.com/assets/main.js",
+                    body="customElements.define('copy-button', CopyButton);",
+                )
+            ],
+        )
+
+        detected_names = names(BuiltinProvider().detect(fetch))
+
+        self.assertNotIn("Angular", detected_names)
+        self.assertNotIn("Polymer", detected_names)
+        self.assertNotIn("Svelte", detected_names)
 
     def test_builtin_implied_runtime_does_not_come_from_generic_headers(self):
         generic = BuiltinProvider().detect(

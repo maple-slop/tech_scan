@@ -317,6 +317,15 @@ class FetchTests(unittest.TestCase):
         )
         self.assertEqual(session.kwargs[0]["verify"], "/tmp/ca.pem")
 
+    def test_requests_does_not_request_brotli_without_decoder_dependency(self):
+        session = FakeSession([FakeResponse("https://example.com", 200, {}, "ok")])
+
+        with patch("tech_scan.fetchers.requests.requests.Session", return_value=session):
+            fetch_requests("example.com", "https://example.com", 5, None)
+
+        self.assertEqual(session.kwargs[0]["headers"]["Accept-Encoding"], "gzip, deflate")
+        self.assertNotIn("br", session.kwargs[0]["headers"]["Accept-Encoding"])
+
     def test_requests_insecure_disables_tls_verification(self):
         session = FakeSession([FakeResponse("https://example.com", 200, {}, "ok")])
 
