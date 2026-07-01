@@ -19,7 +19,6 @@ from tech_scan.fetchers.adblock import is_blocked_script_url
 from tech_scan.fetchers.auto import browser_fallback_reason
 from tech_scan.fetchers.browser import (
     AsyncBrowserPool,
-    BrowserSession,
     browser_extension_identity,
     chromium_executable_path,
     ubol_extension_path,
@@ -81,147 +80,6 @@ class FakeBrowserResponse:
         return self._body
 
 
-class FakePage:
-    def __init__(self):
-        self.main_frame = object()
-        self.url = "https://example.com/app"
-        self.routes = []
-        self.handlers = {}
-        self.closed = False
-
-    def route(self, pattern, handler):
-        self.routes.append((pattern, handler))
-
-    def on(self, event, handler):
-        setattr(handler, "_pw_impl_instance_", object())
-        self.handlers.setdefault(event, []).append(handler)
-
-    def goto(self, url, **kwargs):
-        self.url = url
-        responses = [
-            FakeBrowserResponse(url, "document", headers={"server": "Chromium"}, body=b"<html></html>"),
-            FakeBrowserResponse(
-                "https://example.com/app.js",
-                "script",
-                headers={"content-type": "application/javascript"},
-                body=b"React.version='18.0.0'",
-            ),
-            FakeBrowserResponse(
-                "https://example.com/app.css",
-                "stylesheet",
-                headers={"content-type": "text/css"},
-                body=b"body{}",
-            ),
-            FakeBrowserResponse(
-                "https://example.com/logo.png",
-                "image",
-                headers={"content-type": "image/png"},
-                body=b"PNG",
-            ),
-            FakeBrowserResponse(
-                "https://example.com/broken.js",
-                "script",
-                headers={"content-type": "application/javascript"},
-                body_error="body failed",
-            ),
-        ]
-        for response in responses:
-            for handler in self.handlers.get("response", []):
-                handler(response)
-        return responses[0]
-
-    def content(self):
-        return '<html><script src="/app.js"></script></html>'
-
-    def evaluate(self, script):
-        if "Object.keys(window)" in script:
-            return ["React"]
-        return ["https://example.com/app.js"]
-
-    def close(self):
-        self.closed = True
-
-
-class FakeContext:
-    def __init__(self, browser):
-        self.browser = browser
-        self.pages = []
-        self.closed = False
-        self.cleared_cookies = 0
-
-    def new_page(self):
-        page = FakePage()
-        self.pages.append(page)
-        return page
-
-    def cookies(self):
-        return [{"name": "sid", "value": "abc"}]
-
-    def clear_cookies(self):
-        self.cleared_cookies += 1
-
-    def close(self):
-        self.closed = True
-
-
-class FakeBrowser:
-    def __init__(self):
-        self.contexts = []
-        self.closed = False
-
-    def new_context(self, **kwargs):
-        context = FakeContext(self)
-        self.contexts.append((context, kwargs))
-        return context
-
-    def close(self):
-        self.closed = True
-
-
-class FakeChromium:
-    def __init__(self):
-        self.launch_args = []
-        self.persistent_launch_args = []
-        self.browser = FakeBrowser()
-        self.persistent_context = FakeContext(self.browser)
-
-    def launch(self, **kwargs):
-        self.launch_args.append(kwargs)
-        return self.browser
-
-    def launch_persistent_context(self, user_data_dir, **kwargs):
-        self.persistent_launch_args.append((user_data_dir, kwargs))
-        return self.persistent_context
-
-
-class FakePlaywright:
-    def __init__(self):
-        self.chromium = FakeChromium()
-        self.stopped = False
-
-    def stop(self):
-        self.stopped = True
-
-
-class FakePlaywrightStarter:
-    def __init__(self, playwright):
-        self.playwright = playwright
-
-    def start(self):
-        return self.playwright
-
-
-def install_fake_playwright(playwright):
-    sync_api = SimpleNamespace(sync_playwright=lambda: FakePlaywrightStarter(playwright))
-    return patch.dict(
-        sys.modules,
-        {
-            "playwright": SimpleNamespace(),
-            "playwright.sync_api": sync_api,
-        },
-    )
-
-
 class AsyncFakeBrowserResponse(FakeBrowserResponse):
     async def body(self):
         if self._body_error:
@@ -229,9 +87,20 @@ class AsyncFakeBrowserResponse(FakeBrowserResponse):
         return self._body
 
 
-class AsyncFakePage(FakePage):
+class AsyncFakePage:
+    def __init__(self):
+        self.main_frame = object()
+        self.url = "https://example.com/app"
+        self.routes = []
+        self.handlers = {}
+        self.closed = False
+
     async def route(self, pattern, handler):
         self.routes.append((pattern, handler))
+
+    def on(self, event, handler):
+        setattr(handler, "_pw_impl_instance_", object())
+        self.handlers.setdefault(event, []).append(handler)
 
     async def goto(self, url, **kwargs):
         self.url = url
@@ -242,6 +111,24 @@ class AsyncFakePage(FakePage):
                 "script",
                 headers={"content-type": "application/javascript"},
                 body=b"React.version='18.0.0'",
+            ),
+            AsyncFakeBrowserResponse(
+                "https://example.com/app.css",
+                "stylesheet",
+                headers={"content-type": "text/css"},
+                body=b"body{}",
+            ),
+            AsyncFakeBrowserResponse(
+                "https://example.com/logo.png",
+                "image",
+                headers={"content-type": "image/png"},
+                body=b"PNG",
+            ),
+            AsyncFakeBrowserResponse(
+                "https://example.com/broken.js",
+                "script",
+                headers={"content-type": "application/javascript"},
+                body_error="body failed",
             ),
         ]
         for response in responses:
@@ -261,7 +148,13 @@ class AsyncFakePage(FakePage):
         self.closed = True
 
 
-class AsyncFakeContext(FakeContext):
+class AsyncFakeContext:
+    def __init__(self, browser):
+        self.browser = browser
+        self.pages = []
+        self.closed = False
+        self.cleared_cookies = 0
+
     async def new_page(self):
         page = AsyncFakePage()
         self.pages.append(page)
@@ -277,7 +170,11 @@ class AsyncFakeContext(FakeContext):
         self.closed = True
 
 
-class AsyncFakeBrowser(FakeBrowser):
+class AsyncFakeBrowser:
+    def __init__(self):
+        self.contexts = []
+        self.closed = False
+
     async def new_context(self, **kwargs):
         context = AsyncFakeContext(self)
         self.contexts.append((context, kwargs))
@@ -788,59 +685,6 @@ class FetchTests(unittest.TestCase):
             with patch("tech_scan.fetchers.browser.os.access", return_value=False):
                 self.assertIsNone(chromium_executable_path())
 
-    def test_browser_session_uses_one_persistent_context_with_extension(self):
-        playwright = FakePlaywright()
-        with install_fake_playwright(playwright):
-            with patch.dict("os.environ", {"CHROMIUM_PATH": "/custom/chromium"}):
-                session = BrowserSession(proxy="http://proxy:8080")
-                first = session.fetch("example.com", "https://example.com", 5)
-                second = session.fetch("example.org", "https://example.org", 5)
-                session.close()
-
-        self.assertEqual(len(playwright.chromium.launch_args), 0)
-        self.assertEqual(len(playwright.chromium.persistent_launch_args), 1)
-        user_data_dir, launch_args = playwright.chromium.persistent_launch_args[0]
-        self.assertEqual(launch_args["executable_path"], "/custom/chromium")
-        self.assertEqual(launch_args["proxy"], {"server": "http://proxy:8080"})
-        self.assertIn("--load-extension=", launch_args["args"][1])
-        self.assertIn("tech_scan/fetchers/data/ubol", launch_args["args"][1])
-        self.assertEqual(playwright.chromium.persistent_context.cleared_cookies, 2)
-        self.assertFalse(__import__("os").path.exists(user_data_dir))
-        self.assertEqual(first.browser_globals, ["React"])
-        self.assertEqual(second.script_srcs, ["https://example.com/app.js"])
-        self.assertTrue(playwright.chromium.persistent_context.closed)
-        self.assertTrue(playwright.stopped)
-
-    def test_browser_session_applies_tls_options(self):
-        playwright = FakePlaywright()
-        with install_fake_playwright(playwright):
-            session = BrowserSession(
-                proxy=None,
-                ignore_https_errors=True,
-                ca_bundle="/tmp/mitmproxy-ca.pem",
-            )
-            session.fetch("example.com", "https://example.com", 5)
-            session.close()
-
-        launch_env = playwright.chromium.persistent_launch_args[0][1]["env"]
-        self.assertEqual(launch_env["SSL_CERT_FILE"], "/tmp/mitmproxy-ca.pem")
-        self.assertEqual(launch_env["REQUESTS_CA_BUNDLE"], "/tmp/mitmproxy-ca.pem")
-        self.assertEqual(launch_env["CURL_CA_BUNDLE"], "/tmp/mitmproxy-ca.pem")
-        self.assertTrue(playwright.chromium.persistent_launch_args[0][1]["ignore_https_errors"])
-
-    def test_browser_session_raw_mode_uses_browser_contexts(self):
-        playwright = FakePlaywright()
-        with install_fake_playwright(playwright):
-            session = BrowserSession(proxy=None, enable_extension=False)
-            session.fetch("example.com", "https://example.com", 5)
-            session.close()
-
-        self.assertEqual(len(playwright.chromium.launch_args), 1)
-        self.assertEqual(len(playwright.chromium.persistent_launch_args), 0)
-        self.assertEqual(len(playwright.chromium.browser.contexts), 1)
-        self.assertTrue(playwright.chromium.browser.contexts[0][0].closed)
-        self.assertTrue(playwright.chromium.browser.closed)
-
     def test_async_browser_pool_raw_mode_uses_isolated_contexts_concurrently(self):
         async def run():
             playwright = AsyncFakePlaywright()
@@ -884,12 +728,36 @@ class FetchTests(unittest.TestCase):
         self.assertEqual(first.status, 200)
         self.assertEqual(second.status, 200)
 
-    def test_browser_session_records_subresources_and_body_errors(self):
-        playwright = FakePlaywright()
-        with install_fake_playwright(playwright):
-            session = BrowserSession(proxy=None)
-            result = session.fetch("example.com", "https://example.com", 5)
-            session.close()
+    def test_async_browser_pool_applies_tls_options(self):
+        async def run():
+            playwright = AsyncFakePlaywright()
+            with install_fake_async_playwright(playwright):
+                async with AsyncBrowserPool(
+                    proxy=None,
+                    concurrency=1,
+                    ignore_https_errors=True,
+                    ca_bundle="/tmp/mitmproxy-ca.pem",
+                ) as pool:
+                    await pool.fetch("example.com", "https://example.com", 5)
+                return playwright
+
+        playwright = asyncio.run(run())
+
+        launch_env = playwright.chromium.persistent_launch_args[0][1]["env"]
+        self.assertEqual(launch_env["SSL_CERT_FILE"], "/tmp/mitmproxy-ca.pem")
+        self.assertEqual(launch_env["REQUESTS_CA_BUNDLE"], "/tmp/mitmproxy-ca.pem")
+        self.assertEqual(launch_env["CURL_CA_BUNDLE"], "/tmp/mitmproxy-ca.pem")
+        self.assertTrue(playwright.chromium.persistent_launch_args[0][1]["ignore_https_errors"])
+
+    def test_async_browser_pool_records_subresources_and_body_errors(self):
+        async def run():
+            playwright = AsyncFakePlaywright()
+            with install_fake_async_playwright(playwright):
+                async with AsyncBrowserPool(proxy=None, concurrency=1) as pool:
+                    result = await pool.fetch("example.com", "https://example.com", 5)
+                return result
+
+        result = asyncio.run(run())
 
         by_url = {resource.url: resource for resource in result.resources}
         self.assertEqual(result.primary_resource.kind, "document")
@@ -901,34 +769,38 @@ class FetchTests(unittest.TestCase):
         self.assertEqual(by_url["https://example.com/logo.png"].body, "")
         self.assertEqual(by_url["https://example.com/broken.js"].error, "body failed")
 
-    def test_browser_startup_errors_include_traceback(self):
-        class BrokenChromium(FakeChromium):
-            def launch_persistent_context(self, user_data_dir, **kwargs):
+    def test_async_browser_startup_errors_include_traceback(self):
+        class BrokenChromium(AsyncFakeChromium):
+            async def launch_persistent_context(self, user_data_dir, **kwargs):
                 raise RuntimeError("cannot launch browser")
 
-        playwright = FakePlaywright()
+        playwright = AsyncFakePlaywright()
         playwright.chromium = BrokenChromium()
-        with install_fake_playwright(playwright):
-            session = BrowserSession(proxy=None, include_traceback=True)
-            result = session.fetch("example.com", "https://example.com", 5)
-            session.close()
+        async def run():
+            with install_fake_async_playwright(playwright):
+                async with AsyncBrowserPool(proxy=None, concurrency=1, include_traceback=True) as pool:
+                    return await pool.fetch("example.com", "https://example.com", 5)
+
+        result = asyncio.run(run())
 
         self.assertIsNone(result.status)
         assert result.error is not None
         self.assertIn("cannot launch browser", result.error)
         self.assertIn("Traceback (most recent call last):", result.error)
 
-    def test_browser_startup_errors_are_short_by_default(self):
-        class BrokenChromium(FakeChromium):
-            def launch_persistent_context(self, user_data_dir, **kwargs):
+    def test_async_browser_startup_errors_are_short_by_default(self):
+        class BrokenChromium(AsyncFakeChromium):
+            async def launch_persistent_context(self, user_data_dir, **kwargs):
                 raise RuntimeError("cannot launch browser")
 
-        playwright = FakePlaywright()
+        playwright = AsyncFakePlaywright()
         playwright.chromium = BrokenChromium()
-        with install_fake_playwright(playwright):
-            session = BrowserSession(proxy=None)
-            result = session.fetch("example.com", "https://example.com", 5)
-            session.close()
+        async def run():
+            with install_fake_async_playwright(playwright):
+                async with AsyncBrowserPool(proxy=None, concurrency=1) as pool:
+                    return await pool.fetch("example.com", "https://example.com", 5)
+
+        result = asyncio.run(run())
 
         self.assertEqual(result.error, "cannot launch browser")
 

@@ -61,8 +61,9 @@ Diagnostics:
 
 ## Architecture And Compatibility
 
-- `tech_scan/cli.py`: argparse setup, stdin/stdout handling, validation, and process-level browser-session lifecycle.
-- `tech_scan/scanner.py`: scan orchestration for target expansion, cache lookup/write, sanity checks, fetcher execution, auto browser fallback, provider execution, and result assembly.
+- `tech_scan/cli.py`: argparse setup, stdin/stdout handling, validation, and process exit codes.
+- `tech_scan/scheduler.py`: concurrency, async browser pool lifecycle, result printing order, and Ctrl-C/SIGINT cancellation behavior.
+- `tech_scan/scanner.py`: per-target scan orchestration for target expansion, cache lookup/write, sanity checks, fetcher execution, auto browser fallback, provider execution, and result assembly.
 - `tech_scan/cli_config.py`: CLI-derived TLS, CA bundle, Chromium, and cache identity helpers.
 - `tech_scan/fetchers/`: requests fetcher, browser fetcher, headers, resource capture, and auto browser fallback heuristic.
 - `tech_scan/cache.py`: SQLite cache for fetched resource observations and links.
@@ -76,7 +77,7 @@ Diagnostics:
 
 Compatibility guidance:
 
-- Prefer deleting compatibility shims instead of preserving stale internal APIs.
+- Prefer deleting compatibility shims instead of preserving stale internal APIs. This is early-stage software, so default to clean breaking changes when they keep the code easier to maintain, but explicitly notify the user about those breaks.
 - Do not add public imports for internal helpers in package `__init__.py` files.
 - Breaking cache schema/profile compatibility is acceptable; bump `FETCH_PROFILE_VERSION` directly and do not add migrations unless explicitly requested.
 - Breaking CLI behavior is acceptable when it improves scanner correctness or throughput, but mention it clearly in the final response and tests.
@@ -115,11 +116,13 @@ Cache successful responses, HTTP error statuses, and target/server-side negative
 
 Fetchers receive one concrete URL and must fetch only that URL. Do not reintroduce protocol fallback inside fetchers; all HTTP/HTTPS expansion belongs before cache, sanity, and fetch in the scanner/normalization layer.
 
-Browser mode should use Playwright's async API for concurrency. Do not share sync Playwright `Browser`, `BrowserContext`, `Page`, or persistent-context objects across threads.
+Browser mode uses Playwright's async API for concurrency. Do not reintroduce sync Playwright fetchers or share sync Playwright `Browser`, `BrowserContext`, `Page`, or persistent-context objects across threads.
 
 Use one async Playwright driver per CLI browser/auto run. With `--no-browser-extension`, prefer one Chromium browser with isolated contexts per target. With the default uBlock Origin Lite extension enabled, use separate persistent Chromium contexts/profiles for concurrent browser slots because Chromium extensions require persistent contexts and a shared persistent context would share cookies/storage between targets.
 
 Browser mode loads vendored uBlock Origin Lite by default. Use `--no-browser-extension` when a raw browser session is needed. Use `CHROMIUM_PATH` when set, otherwise `/usr/bin/chromium` when executable, otherwise Playwright default lookup.
+
+Ctrl-C/SIGINT should cancel pending work, close browser pools/contexts, avoid traceback noise, and return exit code `130`.
 
 Proxy/TLS behavior:
 

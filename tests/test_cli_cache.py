@@ -228,7 +228,7 @@ class CliCacheTests(unittest.TestCase):
             )
 
             with patch("tech_scan.scanner.fetch_requests", return_value=fetch):
-                with patch("tech_scan.scanner.fetch_browser") as browser_mock:
+                with patch("tech_scan.scanner.fetch_browser_async") as browser_mock:
                     result = scan_target(
                         "example.com",
                         args_for(db, mode="auto"),
@@ -265,7 +265,7 @@ class CliCacheTests(unittest.TestCase):
             )
             args = args_for(db, mode="browser")
 
-            with patch("tech_scan.scanner.fetch_browser", side_effect=[first_fetch, second_fetch]) as fetch_mock:
+            with patch("tech_scan.scanner.fetch_browser_async", side_effect=[first_fetch, second_fetch]) as fetch_mock:
                 with patch.dict("os.environ", {"CHROMIUM_PATH": "/old/chrome"}):
                     first = scan_target("example.com", args, ["builtin"], ["builtin"])
                 with patch.dict("os.environ", {"CHROMIUM_PATH": "/new/chrome"}):
@@ -302,7 +302,7 @@ class CliCacheTests(unittest.TestCase):
             )
             args = args_for(db, mode="browser")
 
-            with patch("tech_scan.scanner.fetch_browser", side_effect=[failed_fetch, successful_fetch]) as fetch_mock:
+            with patch("tech_scan.scanner.fetch_browser_async", side_effect=[failed_fetch, successful_fetch]) as fetch_mock:
                 first = scan_target("example.com", args, ["builtin"], ["builtin"])
                 second = scan_target("example.com", args, ["builtin"], ["builtin"])
 
@@ -339,7 +339,7 @@ class CliCacheTests(unittest.TestCase):
             )
 
             with patch("tech_scan.scanner.fetch_requests", return_value=fetch):
-                with patch("tech_scan.scanner.fetch_browser", return_value=browser_fetch):
+                with patch("tech_scan.scanner.fetch_browser_async", return_value=browser_fetch):
                     result = scan_target("example.com", args, ["builtin"], ["builtin"])
 
             self.assertEqual(result["mode"], "browser")
@@ -374,7 +374,7 @@ class CliCacheTests(unittest.TestCase):
             )
 
             with patch("tech_scan.scanner.fetch_requests", return_value=fetch):
-                with patch("tech_scan.scanner.fetch_browser", return_value=browser_fetch):
+                with patch("tech_scan.scanner.fetch_browser_async", return_value=browser_fetch):
                     result = scan_target("example.com", args, ["builtin"], ["builtin"])
 
             self.assertEqual(result["mode"], "browser")
@@ -408,7 +408,7 @@ class CliCacheTests(unittest.TestCase):
             )
 
             with patch("tech_scan.scanner.fetch_requests", return_value=fetch):
-                with patch("tech_scan.scanner.fetch_browser", return_value=browser_fetch):
+                with patch("tech_scan.scanner.fetch_browser_async", return_value=browser_fetch):
                     result = scan_target("example.com", args, ["builtin"], ["builtin"])
 
         self.assertEqual(result["mode"], "requests")

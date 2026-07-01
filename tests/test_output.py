@@ -297,7 +297,7 @@ class OutputTests(unittest.TestCase):
                 "error": None,
             }
 
-            with patch("tech_scan.cli.scan_input", return_value=[fetch_result]):
+            with patch("tech_scan.scheduler.scan_input", return_value=[fetch_result]):
                 with patch("sys.stdin", io.StringIO("a.example\nb.example\n")):
                     stdout = io.StringIO()
                     with redirect_stdout(stdout):
@@ -335,7 +335,7 @@ class OutputTests(unittest.TestCase):
                 "--concurrency",
                 "2",
             ]
-            with patch("tech_scan.cli.scan_input", side_effect=fake_scan_input):
+            with patch("tech_scan.scheduler.scan_input", side_effect=fake_scan_input):
                 with patch("sys.stdin", io.StringIO("a.example\nb.example\n")):
                     stdout = io.StringIO()
                     with redirect_stdout(stdout):
@@ -398,8 +398,8 @@ class OutputTests(unittest.TestCase):
                 "--concurrency",
                 "2",
             ]
-            with patch("tech_scan.cli.AsyncBrowserPool", FakeAsyncBrowserPool):
-                with patch("tech_scan.cli.scan_input_async", side_effect=fake_scan_input) as scan_mock:
+            with patch("tech_scan.scheduler.AsyncBrowserPool", FakeAsyncBrowserPool):
+                with patch("tech_scan.scheduler.scan_input_async", side_effect=fake_scan_input) as scan_mock:
                     with patch("sys.stdin", io.StringIO("a.example\nb.example\n")):
                         stdout = io.StringIO()
                         with redirect_stdout(stdout):
@@ -446,8 +446,8 @@ class OutputTests(unittest.TestCase):
                 "--concurrency",
                 "2",
             ]
-            with patch("tech_scan.cli.AsyncBrowserPool", FakeAsyncBrowserPool):
-                with patch("tech_scan.cli.scan_input_async", side_effect=fake_scan_input):
+            with patch("tech_scan.scheduler.AsyncBrowserPool", FakeAsyncBrowserPool):
+                with patch("tech_scan.scheduler.scan_input_async", side_effect=fake_scan_input):
                     with patch("sys.stdin", io.StringIO("a.example\nb.example\n")):
                         stdout = io.StringIO()
                         with redirect_stdout(stdout):
@@ -492,8 +492,8 @@ class OutputTests(unittest.TestCase):
                 "--concurrency",
                 "2",
             ]
-            with patch("tech_scan.cli.AsyncBrowserPool", FakeAsyncBrowserPool):
-                with patch("tech_scan.cli.scan_input_async", side_effect=fake_scan_input):
+            with patch("tech_scan.scheduler.AsyncBrowserPool", FakeAsyncBrowserPool):
+                with patch("tech_scan.scheduler.scan_input_async", side_effect=fake_scan_input):
                     with patch("sys.stdin", io.StringIO("a.example\nb.example\n")):
                         stdout = io.StringIO()
                         with redirect_stdout(stdout):
@@ -527,7 +527,7 @@ class OutputTests(unittest.TestCase):
                 "--verbosity",
                 "1",
             ]
-            with patch("tech_scan.cli.scan_input", side_effect=fake_scan_input):
+            with patch("tech_scan.scheduler.scan_input", side_effect=fake_scan_input):
                 with patch("sys.stdin", io.StringIO("a.example\n")):
                     stdout = io.StringIO()
                     stderr = io.StringIO()
@@ -538,6 +538,74 @@ class OutputTests(unittest.TestCase):
         self.assertEqual(len(lines), 1)
         self.assertEqual(json.loads(lines[0])["input"], "a.example")
         self.assertIn("diagnostic for a.example", stderr.getvalue())
+
+    def test_requests_sigint_returns_130_without_traceback(self):
+        def interrupted(*args, **kwargs):
+            raise KeyboardInterrupt
+
+        with TemporaryDirectory() as tmpdir:
+            args = [
+                "--db",
+                str(Path(tmpdir) / "results.db"),
+                "--mode",
+                "requests",
+                "--output",
+                "jsonl",
+                "--verbosity",
+                "1",
+            ]
+            with patch("tech_scan.scheduler.scan_input", side_effect=interrupted):
+                with patch("sys.stdin", io.StringIO("a.example\n")):
+                    stdout = io.StringIO()
+                    stderr = io.StringIO()
+                    with redirect_stdout(stdout), redirect_stderr(stderr):
+                        self.assertEqual(main(args), 130)
+
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertIn("scan interrupted", stderr.getvalue())
+        self.assertNotIn("Traceback", stderr.getvalue())
+
+    def test_async_browser_sigint_closes_pool_and_returns_130(self):
+        pools = []
+
+        class FakeAsyncBrowserPool:
+            def __init__(self, *args, **kwargs):
+                self.closed = False
+                pools.append(self)
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                self.closed = True
+
+        async def interrupted(*args, **kwargs):
+            raise KeyboardInterrupt
+
+        with TemporaryDirectory() as tmpdir:
+            args = [
+                "--db",
+                str(Path(tmpdir) / "results.db"),
+                "--mode",
+                "browser",
+                "--output",
+                "jsonl",
+                "--verbosity",
+                "1",
+            ]
+            with patch("tech_scan.scheduler.AsyncBrowserPool", FakeAsyncBrowserPool):
+                with patch("tech_scan.scheduler.scan_input_async", side_effect=interrupted):
+                    with patch("sys.stdin", io.StringIO("a.example\n")):
+                        stdout = io.StringIO()
+                        stderr = io.StringIO()
+                        with redirect_stdout(stdout), redirect_stderr(stderr):
+                            self.assertEqual(main(args), 130)
+
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertTrue(pools)
+        self.assertTrue(pools[0].closed)
+        self.assertIn("scan interrupted", stderr.getvalue())
+        self.assertNotIn("Traceback", stderr.getvalue())
 
     def test_human_first_line_uses_origin_not_redirected_url(self):
         result = dict(RESULT)

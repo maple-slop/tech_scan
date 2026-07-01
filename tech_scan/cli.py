@@ -4,15 +4,13 @@ import argparse
 import asyncio
 import os
 import sys
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from .cache import default_db_path
 from .cli_config import ca_bundle_env_default
 from .diagnostics import Diagnostics
-from .fetchers.browser import AsyncBrowserPool
 from .output import format_result
-from .scanner import scan_input, scan_input_async
+from .scheduler import run_browser_or_auto, run_requests
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -154,43 +152,6 @@ def print_result(result: dict[str, Any], output: str, color: bool) -> None:
         print(flush=True)
 
 
-async def main_browser_async(
-    targets: list[str],
-    args: argparse.Namespace,
-    providers_requested: list[str],
-    provider_names: list[str],
-    color: bool,
-) -> int:
-    semaphore = asyncio.Semaphore(args.concurrency)
-    async with AsyncBrowserPool(
-        args.proxy,
-        args.concurrency,
-        ignore_https_errors=args.insecure,
-        ca_bundle=str(args.ca_bundle.resolve()) if args.ca_bundle else None,
-        enable_extension=not getattr(args, "no_browser_extension", False),
-        diagnostics=args._diagnostics,
-        include_traceback=args.verbosity >= 2,
-    ) as browser_pool:
-        async def run_target(target: str) -> list[dict[str, Any]]:
-            async with semaphore:
-                args._diagnostics.log(3, f"async scan start: target={target}")
-                results = await scan_input_async(
-                    target,
-                    args,
-                    providers_requested,
-                    provider_names,
-                    browser_pool,
-                )
-                args._diagnostics.log(3, f"async scan end: target={target}")
-                return results
-
-        tasks = [asyncio.create_task(run_target(target)) for target in targets]
-        for task in asyncio.as_completed(tasks):
-            for result in await task:
-                print_result(result, args.output, color)
-    return 0
-
-
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     args._diagnostics = Diagnostics(args.verbosity)
@@ -212,30 +173,26 @@ def main(argv: list[str] | None = None) -> int:
 
     targets = [line.strip() for line in sys.stdin if line.strip()]
     color = sys.stdout.isatty() and "NO_COLOR" not in os.environ
+    printer = lambda result: print_result(result, args.output, color)
     if args.mode in {"browser", "auto"}:
-        return asyncio.run(
-            main_browser_async(
-                targets,
-                args,
-                providers_requested,
-                provider_names,
-                color,
+        try:
+            return asyncio.run(
+                run_browser_or_auto(
+                    targets,
+                    args,
+                    providers_requested,
+                    provider_names,
+                    printer,
+                )
             )
-        )
+        except KeyboardInterrupt:
+            args._diagnostics.log(1, "scan interrupted; cancelling pending work")
+            return 130
 
-    with ThreadPoolExecutor(max_workers=args.concurrency) as executor:
-        futures = [
-            executor.submit(
-                scan_input,
-                target,
-                args,
-                providers_requested,
-                provider_names,
-                None,
-            )
-            for target in targets
-        ]
-        for future in as_completed(futures):
-            for result in future.result():
-                print_result(result, args.output, color)
-    return 0
+    return run_requests(
+        targets,
+        args,
+        providers_requested,
+        provider_names,
+        printer,
+    )
