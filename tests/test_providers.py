@@ -286,6 +286,73 @@ class ProviderTests(unittest.TestCase):
             (make_fetch(body='<div x-data="{open:false}"></div>'), "Alpine.js"),
             (make_fetch(body='<meta name="generator" content="Astro v4.0.0">'), "Astro"),
             (make_fetch(body='<astro-island component-url="/_astro/Header.js"></astro-island>'), "Astro"),
+            (make_fetch(body='<main data-astro-cid-abcd1234></main>'), "Astro"),
+            (make_fetch(body='<script type="module" src="/_astro/page.DtSnzKYu.js"></script>'), "Astro"),
+            (
+                make_fetch_with_resources(
+                    resources=[script_resource(url="https://example.com/_astro/page.DtSnzKYu.js")]
+                ),
+                "Astro",
+            ),
+            (make_fetch(body='<a href="/guide/v10/getting-started#aliasing-react-to-preact">preact/compat</a>'), "Preact"),
+            (
+                make_fetch_with_resources(
+                    resources=[
+                        script_resource(
+                            url="https://example.com/assets/app.js",
+                            body='import{h}from"preact";import{useState}from"preact/hooks";',
+                        )
+                    ],
+                ),
+                "Preact",
+            ),
+            (
+                make_fetch_with_resources(
+                    resources=[script_resource(url="https://cdn.example/preact.module.js")]
+                ),
+                "Preact",
+            ),
+            (make_fetch(body='<div data-hk="0-0"></div>'), "SolidJS"),
+            (
+                make_fetch_with_resources(
+                    resources=[
+                        script_resource(
+                            url="https://example.com/assets/app.js",
+                            body='import{render}from"solid-js/web";const done=_$HY.done;',
+                        )
+                    ],
+                ),
+                "SolidJS",
+            ),
+            (
+                make_fetch_with_resources(
+                    resources=[script_resource(url="https://cdn.example/solid-js/web.js")]
+                ),
+                "SolidJS",
+            ),
+            (
+                make_fetch(
+                    body='<html q:render="ssr" q:container="paused" q:version="1.19.0" q:base="/build/"></html>'
+                ),
+                "Qwik",
+            ),
+            (
+                make_fetch_with_resources(
+                    resources=[script_resource(url="https://example.com/build/q-naDMFAHy.js")]
+                ),
+                "Qwik",
+            ),
+            (
+                make_fetch_with_resources(
+                    resources=[
+                        script_resource(
+                            url="https://example.com/build/app.js",
+                            body='const qEvents=[];const loggedQrls=new Set();node._qwikjson_=true;',
+                        )
+                    ],
+                ),
+                "Qwik",
+            ),
             (make_fetch(body='<div data-controller="hello"></div>'), "Stimulus"),
             (make_fetch(body='<script src="/htmx.min.js"></script>'), "htmx"),
             (make_fetch(body='<link rel="import" href="/polymer.html">'), "Polymer"),
@@ -321,6 +388,27 @@ class ProviderTests(unittest.TestCase):
         self.assertNotIn("Angular", detected_names)
         self.assertNotIn("Polymer", detected_names)
         self.assertNotIn("Svelte", detected_names)
+
+    def test_builtin_new_frontend_signatures_ignore_plain_prose_and_generic_vite(self):
+        fetch = make_fetch_with_resources(
+            body=(
+                "<title>Preact Solid Qwik Astro comparison</title>"
+                "<main>Plain prose mentions Preact, Solid, Qwik, and Astro.</main>"
+            ),
+            resources=[
+                script_resource(
+                    url="https://example.com/assets/index-CnLfxSQs.js",
+                    body="const __vite__mapDeps=(i,m=__vite__mapDeps,d=(m.f||(m.f=[])));",
+                )
+            ],
+        )
+
+        detected_names = names(BuiltinProvider().detect(fetch))
+
+        self.assertNotIn("Preact", detected_names)
+        self.assertNotIn("SolidJS", detected_names)
+        self.assertNotIn("Qwik", detected_names)
+        self.assertNotIn("Astro", detected_names)
 
     def test_builtin_implied_runtime_does_not_come_from_generic_headers(self):
         generic = BuiltinProvider().detect(

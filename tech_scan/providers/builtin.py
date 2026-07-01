@@ -250,6 +250,18 @@ RULES = [
         script_url_detector(r"vue(?:\.runtime)?(?:\.global)?(?:\.prod)?(?:\.min)?\.js"),
     )),
     Rule("Vue.js", DIM_FRONTEND, 75, global_detector(r"Vue")),
+    Rule("Preact", DIM_FRONTEND, 80, any_detector(
+        body_detector(r"\bpreact/(?:hooks|compat|jsx-runtime)\b|@preact/|preact-render-to-string", "preact package marker", True),
+        script_body_detector(r"\bpreact/(?:hooks|compat|jsx-runtime)\b|@preact/|__PREACT_DEVTOOLS__|options\.__[a-z]", "script body"),
+        script_url_detector(r"(?:^|[/-])preact(?:[.-]|/)|@preact/"),
+    )),
+    Rule("Preact", DIM_FRONTEND, 75, global_detector(r"preact|__PREACT_DEVTOOLS__")),
+    Rule("SolidJS", DIM_FRONTEND, 80, any_detector(
+        body_detector(r"\bsolid-js/(?:web|store|html)\b|data-hk=", "solidjs marker", True),
+        script_body_detector(r"\bsolid-js(?:/(?:web|store|html))?\b|_\$HY\b|_\$PROXY\b|delegateEvents\(|createComponent\(", "script body"),
+        script_url_detector(r"solid-js(?:[./-]|$)|solid(?:[.-]js)?(?:[.-](?:web|store)|[./-])"),
+    )),
+    Rule("SolidJS", DIM_FRONTEND, 75, global_detector(r"Solid|_\$HY|_\$PROXY")),
     Rule("Angular", DIM_FRONTEND, 80, any_detector(
         body_detector(r"<[^>]+\sng-version(?:[\s=>]|$)|<[^>]+\sng-app(?:[\s=>]|$)", "angular html attribute marker", True),
         script_body_detector(r"@angular/core|ng\.core|platformBrowserDynamic", "script body"),
@@ -281,6 +293,12 @@ RULES = [
         script_url_detector(r"htmx(?:\.min)?\.js"),
     )),
     Rule("htmx", DIM_FRONTEND, 75, global_detector(r"^htmx$")),
+    Rule("Qwik", DIM_FRONTEND, 90, any_detector(
+        body_detector(r"\sq:(?:render|container|version|base|manifest-hash|instance)=", "qwik html attribute marker", True),
+        script_body_detector(r"\bqrl\b|_qwikjson_|qDev|qRuntimeQrl|q:container", "script body"),
+        script_url_detector(r"/build/q-[A-Za-z0-9_-]+\.js|@builder\.io/qwik|qwik(?:\.min)?\.js"),
+    )),
+    Rule("Qwik", DIM_FRONTEND, 75, global_detector(r"Qwik|qwik")),
     Rule("Polymer", DIM_FRONTEND, 80, any_detector(
         body_detector(r"<polymer-[^>]+|/polymer\.html", "polymer marker", True),
         script_body_detector(r"Polymer\(|Polymer\.Element", "script body"),

@@ -3,7 +3,12 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from tech_scan.cache import ResponseCache, cache_disposition, is_cacheable_fetch
+from tech_scan.cache import (
+    FETCH_PROFILE_VERSION,
+    ResponseCache,
+    cache_disposition,
+    is_cacheable_fetch,
+)
 from tech_scan.models import FetchResult, ResourceObservation
 
 
@@ -101,6 +106,9 @@ def make_sanity_fetch(error: str):
 
 
 class CacheTests(unittest.TestCase):
+    def test_fetch_profile_version_bumped_for_requests_header_identity(self):
+        self.assertEqual(FETCH_PROFILE_VERSION, "v6")
+
     def test_requests_observation_roundtrip(self):
         with TemporaryDirectory() as tmpdir:
             with ResponseCache(Path(tmpdir) / "results.db") as cache:
