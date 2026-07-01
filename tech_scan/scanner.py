@@ -3,38 +3,24 @@ from __future__ import annotations
 import argparse
 import asyncio
 import time
-from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Awaitable, Callable
-from urllib.parse import urlparse
 
-from .cache import ResponseCache, cache_disposition
-from .cli_config import fetch_identity, requests_verify
 from .diagnostics import Diagnostics
 from .fetchers.auto import (
     browser_fallback_reason,
     has_useful_response,
     is_cdn_waf_fallback_reason,
 )
-from .fetchers.browser import AsyncBrowserPool, fetch_browser_async
-from .fetchers.requests import fetch_requests
-from .models import FetchResult, ResourceObservation
+from .fetch_pipeline import CacheOutcome, FetchPipeline
+from .fetchers.browser import AsyncBrowserPool
+from .models import FetchResult
 from .normalize import expand_targets
 from .observations import browser_fallback_failed_observation, collect_header_observations
 from .providers import build_providers, merge_findings
-from .sanity import check_target_ports
-from .url_policy import same_hostname
 
 
 BlockingRunner = Callable[..., Awaitable[Any]]
 ResultEmitter = Callable[[dict[str, Any]], None]
-
-
-@dataclass
-class CacheOutcome:
-    lookup: str = "not_applicable"
-    stored: bool | None = None
-    reason: str | None = None
 
 
 async def run_blocking_in_thread(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
@@ -43,23 +29,6 @@ async def run_blocking_in_thread(func: Callable[..., Any], *args: Any, **kwargs:
 
 async def run_blocking_direct(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
     return func(*args, **kwargs)
-
-
-def _redirect_alias_targets(source_url: str, fetch: FetchResult) -> list[str]:
-    aliases = []
-    for resource in fetch.resources:
-        if resource.kind != "redirect" or not resource.final_url:
-            continue
-        parsed = urlparse(resource.final_url)
-        if parsed.scheme not in {"http", "https"}:
-            continue
-        if resource.final_url == source_url:
-            continue
-        if not same_hostname(source_url, resource.final_url):
-            continue
-        if resource.final_url not in aliases:
-            aliases.append(resource.final_url)
-    return aliases
 
 
 class ScanRunner:
@@ -74,12 +43,16 @@ class ScanRunner:
         self.args = args
         self.providers_requested = providers_requested
         self.provider_names = provider_names
-        self.browser_session = browser_session
-        self.run_blocking = run_blocking
         self.diagnostics = getattr(args, "_diagnostics", None) or Diagnostics(
             getattr(args, "verbosity", 0)
         )
         self.providers = build_providers(providers_requested)
+        self.fetch_pipeline = FetchPipeline(
+            args,
+            browser_session,
+            run_blocking,
+            self.diagnostics,
+        )
 
     async def scan_input_async(
         self,
@@ -125,183 +98,54 @@ class ScanRunner:
         auto_observations: list[dict[str, str]] = []
         cache_outcomes: dict[str, CacheOutcome] = {}
 
-        with ResponseCache(self.args.db) as cache:
-            async def cached_or_fetch(mode: str) -> FetchResult:
-                cache_outcome = CacheOutcome(
-                    lookup="refresh" if self.args.refresh else "miss"
-                )
-                cache_outcomes[mode] = cache_outcome
-                identity = fetch_identity(self.args, mode)
-                if not self.args.refresh:
-                    cached_fetch = cache.get(
-                        target,
-                        mode,
-                        self.args.proxy,
-                        self.args.cache_ttl,
-                        identity,
-                    )
-                    if cached_fetch:
-                        cache_outcome.lookup = "hit"
-                        primary = cached_fetch.primary_resource
-                        self.diagnostics.log(
-                            3,
-                            f"cache hit: target={target} mode={mode} "
-                            f"resource_created_at={primary.cache_created_at} "
-                            f"resource_updated_at={primary.cache_updated_at}",
-                        )
-                        return cached_fetch
-                    self.diagnostics.log(3, f"cache miss: target={target} mode={mode}")
-                else:
-                    self.diagnostics.log(3, f"cache bypass refresh: target={target} mode={mode}")
-                sanity = await self.run_blocking(
-                    check_target_ports,
-                    raw_target,
-                    target,
-                    getattr(self.args, "sanity_timeout", 1.0),
-                    diagnostics=self.diagnostics,
-                    include_traceback=self.diagnostics.enabled(2),
-                )
-                if not sanity.ok:
-                    self.diagnostics.log(
-                        1,
-                        f"sanity skip fetcher: target={target} mode={mode} "
-                        f"status={sanity.status}",
-                    )
-                    sanity_resource = ResourceObservation(
-                        id="sanity:0",
-                        kind="sanity",
-                        url=target,
-                        final_url=None,
-                        status=None,
-                        headers={},
-                        cookies={},
-                        body="",
-                        error=sanity.error,
-                    )
-                    sanity_fetch = FetchResult(
-                        input=raw_target,
-                        url=target,
-                        final_url=None,
-                        status=None,
-                        headers={},
-                        cookies={},
-                        body="",
-                        mode=mode,
-                        error=sanity.error,
-                        resources=[sanity_resource],
-                        primary_resource_id=sanity_resource.id,
-                    )
-                    disposition = cache_disposition(sanity_fetch)
-                    cache_outcome.reason = disposition.reason
-                    if disposition.cacheable:
-                        cache.set(target, mode, self.args.proxy, sanity_fetch, identity)
-                        cache_outcome.stored = True
-                        self.diagnostics.log(
-                            3,
-                            f"cache write: target={target} mode={mode} reason={disposition.reason}",
-                        )
-                    else:
-                        cache_outcome.stored = False
-                        self.diagnostics.log(
-                            3,
-                            f"cache drop: target={target} mode={mode} reason={disposition.reason}",
-                        )
-                    return sanity_fetch
-                started = time.perf_counter()
-                self.diagnostics.log(3, f"fetch start: target={target} mode={mode}")
-                if mode == "browser":
-                    fresh_fetch = await fetch_browser_async(
-                        raw_target,
-                        target,
-                        self.args.timeout,
-                        self.args.proxy,
-                        self.browser_session,
-                        self.args.insecure,
-                        str(Path(self.args.ca_bundle).expanduser().resolve())
-                        if self.args.ca_bundle
-                        else None,
-                        not getattr(self.args, "no_browser_extension", False),
-                        diagnostics=self.diagnostics,
-                        include_traceback=self.diagnostics.enabled(2),
-                    )
-                else:
-                    fresh_fetch = await self.run_blocking(
-                        fetch_requests,
-                        raw_target,
-                        target,
-                        self.args.timeout,
-                        self.args.proxy,
-                        requests_verify(self.args.ca_bundle, self.args.insecure),
-                        diagnostics=self.diagnostics,
-                        include_traceback=self.diagnostics.enabled(2),
-                    )
-                elapsed = time.perf_counter() - started
-                self.diagnostics.log(
-                    3,
-                    f"fetch end: target={target} mode={mode} status={fresh_fetch.status} "
-                    f"error={bool(fresh_fetch.error)} elapsed={elapsed:.3f}s",
-                )
-                disposition = cache_disposition(fresh_fetch)
-                cache_outcome.reason = disposition.reason
-                if disposition.cacheable:
-                    cache.set(target, mode, self.args.proxy, fresh_fetch, identity)
-                    for alias in _redirect_alias_targets(target, fresh_fetch):
-                        cache.set(alias, mode, self.args.proxy, fresh_fetch, identity)
-                        self.diagnostics.log(
-                            3,
-                            f"cache alias write: source={target} alias={alias} mode={mode}",
-                        )
-                    cache_outcome.stored = True
-                    self.diagnostics.log(
-                        3,
-                        f"cache write: target={target} mode={mode} reason={disposition.reason}",
-                    )
-                else:
-                    cache_outcome.stored = False
-                    self.diagnostics.log(
-                        3,
-                        f"cache drop: target={target} mode={mode} reason={disposition.reason}",
-                    )
-                return fresh_fetch
-
-            if self.args.mode in {"requests", "auto"}:
-                fetch = await cached_or_fetch("requests")
-                findings = self._detect(fetch, "requests", target)
-
-            fallback_reason = (
-                browser_fallback_reason(fetch, len(findings))
-                if (
-                    self.args.mode == "auto"
-                    and fetch is not None
-                    and not str(fetch.error or "").startswith("sanity check failed:")
-                )
-                else None
+        if self.args.mode in {"requests", "auto"}:
+            fetch, cache_outcome = await self.fetch_pipeline.fetch(
+                "requests",
+                raw_target,
+                target,
             )
-            if self.args.mode == "browser" or (self.args.mode == "auto" and fallback_reason):
-                if fallback_reason:
-                    self.diagnostics.log(
-                        1,
-                        f"auto switching fetcher: target={target} from=requests to=browser "
-                        f"reason={fallback_reason}",
+            cache_outcomes["requests"] = cache_outcome
+            findings = self._detect(fetch, "requests", target)
+
+        fallback_reason = (
+            browser_fallback_reason(fetch, len(findings))
+            if (
+                self.args.mode == "auto"
+                and fetch is not None
+                and not str(fetch.error or "").startswith("sanity check failed:")
+            )
+            else None
+        )
+        if self.args.mode == "browser" or (self.args.mode == "auto" and fallback_reason):
+            if fallback_reason:
+                self.diagnostics.log(
+                    1,
+                    f"auto switching fetcher: target={target} from=requests to=browser "
+                    f"reason={fallback_reason}",
+                )
+            browser_fetch, cache_outcome = await self.fetch_pipeline.fetch(
+                "browser",
+                raw_target,
+                target,
+            )
+            cache_outcomes["browser"] = cache_outcome
+            if not browser_fetch.error:
+                fetch = browser_fetch
+                findings = self._detect(fetch, "browser", target)
+            elif fetch is None:
+                fetch = browser_fetch
+            if (
+                self.args.mode == "auto"
+                and fallback_reason
+                and is_cdn_waf_fallback_reason(fallback_reason)
+                and (browser_fetch.error or not has_useful_response(browser_fetch))
+            ):
+                auto_observations.append(
+                    browser_fallback_failed_observation(
+                        fallback_reason,
+                        browser_fetch,
                     )
-                browser_fetch = await cached_or_fetch("browser")
-                if not browser_fetch.error:
-                    fetch = browser_fetch
-                    findings = self._detect(fetch, "browser", target)
-                elif fetch is None:
-                    fetch = browser_fetch
-                if (
-                    self.args.mode == "auto"
-                    and fallback_reason
-                    and is_cdn_waf_fallback_reason(fallback_reason)
-                    and (browser_fetch.error or not has_useful_response(browser_fetch))
-                ):
-                    auto_observations.append(
-                        browser_fallback_failed_observation(
-                            fallback_reason,
-                            browser_fetch,
-                        )
-                    )
+                )
 
         assert fetch is not None
         merged = merge_findings(findings)
