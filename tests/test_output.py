@@ -208,6 +208,9 @@ class OutputTests(unittest.TestCase):
         self.assertEqual(parse_args([]).timeout, 10)
         self.assertEqual(parse_args(["--timeout", "2.5"]).timeout, 2.5)
 
+    def test_null_mode_is_accepted(self):
+        self.assertEqual(parse_args(["--mode", "null"]).mode, "null")
+
     def test_main_jsonl_outputs_two_results_for_bare_domain(self):
         with TemporaryDirectory() as tmpdir:
             db = Path(tmpdir) / "results.db"

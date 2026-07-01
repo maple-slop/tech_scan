@@ -87,7 +87,15 @@ class ScanRunner:
         auto_observations: list[Observation] = []
         cache_outcomes: dict[str, CacheOutcome] = {}
 
-        if self.args.mode in {"requests", "auto"}:
+        if self.args.mode == "null":
+            fetch, cache_outcome = await self.fetch_pipeline.fetch(
+                "null",
+                raw_target,
+                target,
+            )
+            cache_outcomes["null"] = cache_outcome
+            findings = self._detect(fetch, "null", target)
+        elif self.args.mode in {"requests", "auto"}:
             fetch, cache_outcome = await self.fetch_pipeline.fetch(
                 "requests",
                 raw_target,

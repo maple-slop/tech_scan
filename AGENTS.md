@@ -24,6 +24,7 @@ echo 'https://example.com' | uv run -m tech_scan
 echo 'https://example.com' | uv run -m tech_scan --mode requests --output jsonl
 echo 'https://example.com' | CHROMIUM_PATH=/usr/bin/chromium uv run -m tech_scan --mode browser
 echo 'https://example.com' | uv run -m tech_scan --mode auto --verbosity 1
+echo 'https://example.com' | uv run -m tech_scan --mode null
 echo 'https://example.com' | uv run -m tech_scan --mode browser --concurrency 4 --timeout 10
 echo 'https://example.com' | uv run -m tech_scan --sanity-timeout 0.5
 echo 'https://example.com' | uv run -m tech_scan --proxy http://127.0.0.1:8080 --ca-bundle ~/.mitmproxy/mitmproxy-ca-cert.pem
@@ -36,6 +37,7 @@ Fetch modes:
 - `requests`: browser-like HTTP request headers, no JavaScript execution.
 - `browser`: Playwright Chromium rendering. Browser concurrency should use the async Playwright path, not shared sync Playwright objects across threads.
 - `auto`: requests first, browser only for likely missed content: request errors, `401`/`403`/`429`/`503`, no useful response, explicit JavaScript-required text, or sparse SPA shells with no useful findings.
+- `null`: no-network mode. It performs detection only from existing cached fetch observations, reports a clean cache-miss error for uncached inputs, and must not run sanity checks, requests fetching, browser fetching, or cache writes.
 
 The default per-target timeout is `10` seconds unless the CLI code says otherwise. If changing timeout semantics, update this file, CLI help, tests, and smoke commands together.
 
@@ -114,6 +116,8 @@ Redirects must stay on the same hostname. This prevents an app that redirects to
 Fresh fetches run a default-on DNS/TCP sanity check before requests or browser mode. Bare domains expand to `http://` and `https://` scans; each concrete URL checks its explicit port when present, otherwise `80` for HTTP or `443` for HTTPS. Cache hits bypass this check. Cache server/target-side sanity negatives such as `no-open-port`, `dns-error`, and `invalid-port`; `--refresh` is the way to force a recheck before TTL expiry.
 
 Cache successful responses, HTTP error statuses, and target/server-side negative outcomes. Do not cache local/client failures such as missing Playwright, missing Chromium/browser executable, browser launch failures, or local browser context/session startup failures. Cache diagnostics at verbosity 3 should include write/drop reasons.
+
+`--mode null` reads existing `requests`/`browser` cache entries for the concrete target and recomputes provider findings from those cached observations. A null-mode cache miss is intentionally uncacheable and should report `cache_stored=false`, `cache_reason="null-cache-miss"`, and a short error without stack trace at default verbosity.
 
 Fetchers receive one concrete URL and must fetch only that URL. Do not reintroduce protocol fallback inside fetchers; all HTTP/HTTPS expansion belongs before cache, sanity, and fetch in the scanner/normalization layer.
 

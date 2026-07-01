@@ -837,6 +837,58 @@ class CliCacheTests(unittest.TestCase):
         self.assertEqual(result["technologies"][0]["name"], "nginx")
         self.assertIn("Server: nginx", result["technologies"][0]["evidence"])
 
+    def test_null_mode_cache_miss_reports_clean_uncached_error(self):
+        with TemporaryDirectory() as tmpdir:
+            db = Path(tmpdir) / "results.db"
+            args = args_for(db, mode="null")
+            with patch("tech_scan.fetch_pipeline.check_target_ports") as sanity_mock:
+                with patch("tech_scan.fetch_pipeline.fetch_requests") as fetch_mock:
+                    result = scan_target("example.com", args, ["builtin"], ["builtin"])
+
+        self.assertEqual(result["mode"], "null")
+        self.assertFalse(result["cached"])
+        self.assertEqual(result["cache_lookup"], "miss")
+        self.assertFalse(result["cache_stored"])
+        self.assertEqual(result["cache_reason"], "null-cache-miss")
+        self.assertEqual(result["error"], "null fetch mode cache miss; no cached fetch observation for target")
+        self.assertEqual(result["technologies"], [])
+        sanity_mock.assert_not_called()
+        fetch_mock.assert_not_called()
+
+    def test_null_mode_uses_cached_requests_observation_for_detection(self):
+        with TemporaryDirectory() as tmpdir:
+            db = Path(tmpdir) / "results.db"
+            fetch = FetchResult(
+                input="example.com",
+                url="https://example.com",
+                final_url="https://example.com",
+                status=200,
+                headers={"server": "nginx"},
+                cookies={},
+                body="",
+                mode="requests",
+            )
+            with patch("tech_scan.fetch_pipeline.fetch_requests", return_value=fetch):
+                scan_target("example.com", args_for(db), ["builtin"], ["builtin"])
+
+            self.sanity_mock.reset_mock()
+            with patch("tech_scan.fetch_pipeline.fetch_requests") as fetch_mock:
+                result = scan_target(
+                    "example.com",
+                    args_for(db, mode="null"),
+                    ["builtin"],
+                    ["builtin"],
+                )
+
+        self.assertEqual(result["mode"], "null")
+        self.assertTrue(result["cached"])
+        self.assertEqual(result["cache_lookup"], "hit")
+        self.assertIsNone(result["cache_stored"])
+        self.assertIsNone(result["cache_reason"])
+        self.assertEqual(result["technologies"][0]["name"], "nginx")
+        self.sanity_mock.assert_not_called()
+        fetch_mock.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

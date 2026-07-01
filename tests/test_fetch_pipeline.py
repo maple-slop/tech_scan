@@ -208,3 +208,98 @@ class FetchPipelineTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(second.cached)
         self.assertEqual(second_outcome.lookup, "hit")
         self.assertEqual(fetch_mock.call_count, 1)
+
+    async def test_null_mode_cache_miss_does_not_run_sanity_or_fetcher(self):
+        with TemporaryDirectory() as tmpdir:
+            args = args_for(Path(tmpdir) / "results.db", mode="null")
+            with patch("tech_scan.fetch_pipeline.check_target_ports") as sanity_mock:
+                with patch("tech_scan.fetch_pipeline.fetch_requests") as requests_mock:
+                    with patch("tech_scan.fetch_pipeline.fetch_browser_async") as browser_mock:
+                        fetch, outcome = await self.pipeline(args).fetch(
+                            "null",
+                            "example.com",
+                            "https://example.com",
+                        )
+                        second_fetch, second_outcome = await self.pipeline(args).fetch(
+                            "null",
+                            "example.com",
+                            "https://example.com",
+                        )
+
+        self.assertEqual(fetch.mode, "null")
+        self.assertEqual(fetch.error, "null fetch mode cache miss; no cached fetch observation for target")
+        self.assertEqual(fetch.primary_resource.kind, "null")
+        self.assertEqual(outcome.lookup, "miss")
+        self.assertFalse(outcome.stored)
+        self.assertEqual(outcome.reason, "null-cache-miss")
+        self.assertFalse(second_fetch.cached)
+        self.assertEqual(second_outcome.lookup, "miss")
+        self.assertFalse(second_outcome.stored)
+        self.assertEqual(second_outcome.reason, "null-cache-miss")
+        sanity_mock.assert_not_called()
+        requests_mock.assert_not_called()
+        browser_mock.assert_not_called()
+
+    async def test_null_mode_reads_requests_cache_without_network(self):
+        with TemporaryDirectory() as tmpdir:
+            db = Path(tmpdir) / "results.db"
+            live_args = args_for(db)
+            null_args = args_for(db, mode="null")
+            fetch = document_fetch()
+
+            with patch("tech_scan.fetch_pipeline.check_target_ports", return_value=ok_sanity()):
+                with patch("tech_scan.fetch_pipeline.fetch_requests", return_value=fetch):
+                    await self.pipeline(live_args).fetch(
+                        "requests",
+                        "example.com",
+                        "https://example.com",
+                    )
+
+            with patch("tech_scan.fetch_pipeline.check_target_ports") as sanity_mock:
+                with patch("tech_scan.fetch_pipeline.fetch_requests") as requests_mock:
+                    cached, outcome = await self.pipeline(null_args).fetch(
+                        "null",
+                        "example.com",
+                        "https://example.com",
+                    )
+
+        self.assertTrue(cached.cached)
+        self.assertEqual(cached.mode, "null")
+        self.assertEqual(cached.status, 200)
+        self.assertEqual(outcome.lookup, "hit")
+        self.assertIsNone(outcome.stored)
+        self.assertIsNone(outcome.reason)
+        sanity_mock.assert_not_called()
+        requests_mock.assert_not_called()
+
+    async def test_null_mode_refresh_bypasses_cache_and_does_not_store(self):
+        with TemporaryDirectory() as tmpdir:
+            db = Path(tmpdir) / "results.db"
+            live_args = args_for(db)
+            null_args = args_for(db, refresh=True, mode="null")
+            fetch = document_fetch()
+
+            with patch("tech_scan.fetch_pipeline.check_target_ports", return_value=ok_sanity()):
+                with patch("tech_scan.fetch_pipeline.fetch_requests", return_value=fetch):
+                    await self.pipeline(live_args).fetch(
+                        "requests",
+                        "example.com",
+                        "https://example.com",
+                    )
+
+            with patch("tech_scan.fetch_pipeline.check_target_ports") as sanity_mock:
+                with patch("tech_scan.fetch_pipeline.fetch_requests") as requests_mock:
+                    missed, outcome = await self.pipeline(null_args).fetch(
+                        "null",
+                        "example.com",
+                        "https://example.com",
+                    )
+
+        self.assertFalse(missed.cached)
+        self.assertEqual(missed.mode, "null")
+        self.assertEqual(missed.error, "null fetch mode cache miss; no cached fetch observation for target")
+        self.assertEqual(outcome.lookup, "refresh")
+        self.assertFalse(outcome.stored)
+        self.assertEqual(outcome.reason, "null-cache-miss")
+        sanity_mock.assert_not_called()
+        requests_mock.assert_not_called()

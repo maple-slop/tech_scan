@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 from urllib.parse import urlparse
@@ -85,6 +85,9 @@ class FetchPipeline:
         self.diagnostics = diagnostics
 
     async def fetch(self, mode: str, raw_target: str, target: str) -> tuple[FetchResult, CacheOutcome]:
+        if mode == "null":
+            return self._fetch_null(raw_target, target)
+
         outcome = CacheOutcome(lookup="refresh" if self.args.refresh else "miss")
         identity = fetch_identity(self.args, mode)
 
@@ -165,6 +168,69 @@ class FetchPipeline:
             )
             self._apply_cache_disposition(cache, target, mode, fresh_fetch, identity, outcome)
             return fresh_fetch, outcome
+
+    def _fetch_null(self, raw_target: str, target: str) -> tuple[FetchResult, CacheOutcome]:
+        outcome = CacheOutcome(
+            lookup="refresh" if self.args.refresh else "miss",
+            stored=False,
+            reason="null-cache-miss",
+        )
+        if self.args.refresh:
+            self.diagnostics.log(3, f"null cache bypass refresh: target={target}")
+            return self._null_cache_miss(raw_target, target), outcome
+
+        with ResponseCache(self.args.db) as cache:
+            for cached_mode in ("requests", "browser"):
+                identity = fetch_identity(self.args, cached_mode)
+                cached_fetch = cache.get(
+                    target,
+                    cached_mode,
+                    self.args.proxy,
+                    self.args.cache_ttl,
+                    identity,
+                )
+                if cached_fetch:
+                    outcome.lookup = "hit"
+                    outcome.stored = None
+                    outcome.reason = None
+                    primary = cached_fetch.primary_resource
+                    self.diagnostics.log(
+                        3,
+                        f"null cache hit: target={target} cached_mode={cached_mode} "
+                        f"resource_created_at={primary.cache_created_at} "
+                        f"resource_updated_at={primary.cache_updated_at}",
+                    )
+                    return replace(cached_fetch, mode="null"), outcome
+
+        self.diagnostics.log(3, f"null cache miss: target={target}")
+        return self._null_cache_miss(raw_target, target), outcome
+
+    def _null_cache_miss(self, raw_target: str, target: str) -> FetchResult:
+        error = "null fetch mode cache miss; no cached fetch observation for target"
+        resource = ResourceObservation(
+            id="null:0",
+            kind="null",
+            url=target,
+            final_url=None,
+            status=None,
+            headers={},
+            cookies={},
+            body="",
+            error=error,
+        )
+        return FetchResult(
+            input=raw_target,
+            url=target,
+            final_url=None,
+            status=None,
+            headers={},
+            cookies={},
+            body="",
+            mode="null",
+            error=error,
+            resources=[resource],
+            primary_resource_id=resource.id,
+        )
 
     def _apply_cache_disposition(
         self,

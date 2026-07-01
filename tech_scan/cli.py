@@ -37,11 +37,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--mode",
-        choices=["requests", "browser", "auto"],
+        choices=["requests", "browser", "auto", "null"],
         default="auto",
         help=(
             "Fetch mode. requests uses a browser-like HTTP request; browser uses Playwright; "
-            "auto tries requests first and falls back to browser for sparse/blocked/JS-heavy pages. "
+            "auto tries requests first and falls back to browser for sparse/blocked/JS-heavy pages; "
+            "null performs detection from cache only without network access. "
             "Default: auto."
         ),
     )
