@@ -29,7 +29,7 @@ RULES = [
     Rule("Vue.js", DIM_FRONTEND, 75, global_detector(r"Vue")),
     Rule("Preact", DIM_FRONTEND, 80, any_detector(
         body_detector(r"\bpreact/(?:hooks|compat|jsx-runtime)\b|@preact/|preact-render-to-string", "preact package marker", True),
-        script_body_detector(r"\bpreact/(?:hooks|compat|jsx-runtime)\b|@preact/|__PREACT_DEVTOOLS__|options\.__[a-z]", "script body"),
+        script_body_detector(r"\bpreact/(?:hooks|compat|jsx-runtime)\b|@preact/|__PREACT_DEVTOOLS__", "script body"),
         script_url_detector(r"(?:^|[/-])preact(?:[.-]|/)|@preact/"),
     )),
     Rule("Preact", DIM_FRONTEND, 75, global_detector(r"preact|__PREACT_DEVTOOLS__")),
@@ -46,14 +46,14 @@ RULES = [
     )),
     Rule("Angular", DIM_FRONTEND, 75, global_detector(r"Angular")),
     Rule("AngularJS", DIM_FRONTEND, 85, any_detector(
-        body_detector(r"<(?:div|html)[^>]+ng-app=|<ng-app", "angularjs marker", True),
-        script_body_detector(r"angular\.module|angular\.element|ng-app", "script body"),
+        body_detector(r"<(?:div|html)[^>]+(?:data-)?ng-app\s*=|<ng-app(?:[\s>/]|$)", "angularjs marker", True),
+        script_body_detector(r"angular\.module\s*\(|angular\.element\s*\(", "script body"),
         script_url_detector(r"angular(?:\.min)?\.js"),
     )),
     Rule("AngularJS", DIM_FRONTEND, 75, global_detector(r"^angular$|angular\.version")),
     Rule("Alpine.js", DIM_FRONTEND, 80, any_detector(
-        body_detector(r"\bx-data\b", "alpine marker", True),
-        script_body_detector(r"Alpine\.data|Alpine\.store|x-data", "script body"),
+        body_detector(r"<[^>]+\sx-data(?:[\s=>]|$)", "alpine marker", True),
+        script_body_detector(r"Alpine\.(?:data|store)\s*\(", "script body"),
         script_url_detector(r"alpine(?:\.min)?\.js"),
     )),
     Rule("Alpine.js", DIM_FRONTEND, 75, global_detector(r"Alpine")),

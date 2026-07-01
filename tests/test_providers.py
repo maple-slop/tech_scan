@@ -443,6 +443,63 @@ class ProviderTests(unittest.TestCase):
         self.assertNotIn("Qwik", detected_names)
         self.assertNotIn("Astro", detected_names)
 
+    def test_builtin_frontend_signatures_avoid_live_reference_false_positives(self):
+        fetch = make_fetch_with_resources(
+            body=(
+                "<main>"
+                "goto-cooking-app-download "
+                "__sveltekit_f9vr8a "
+                "</main>"
+            ),
+            resources=[
+                script_resource(
+                    url="https://example.com/chunk.js",
+                    body=(
+                        "this.options.__experimental__naiveDimensions=true;"
+                        '"x-datadog-origin":"rum";'
+                        "const label='goto-newsletter-page';"
+                    ),
+                )
+            ],
+        )
+
+        detected_names = names(BuiltinProvider().detect(fetch))
+
+        self.assertNotIn("AngularJS", detected_names)
+        self.assertNotIn("Preact", detected_names)
+        self.assertNotIn("Alpine.js", detected_names)
+        self.assertIn("Svelte", detected_names)
+
+    def test_builtin_frontend_tightened_signatures_still_match_real_markers(self):
+        angular = make_fetch_with_resources(
+            resources=[
+                script_resource(
+                    url="https://example.com/app.js",
+                    body="angular.module('app', []).controller('Home', function() {});",
+                )
+            ],
+        )
+        alpine = make_fetch_with_resources(
+            resources=[
+                script_resource(
+                    url="https://example.com/app.js",
+                    body="document.addEventListener('alpine:init',()=>Alpine.data('menu',()=>({open:false})));",
+                )
+            ],
+        )
+        preact = make_fetch_with_resources(
+            resources=[
+                script_resource(
+                    url="https://example.com/app.js",
+                    body='import{useState}from"preact/hooks";',
+                )
+            ],
+        )
+
+        self.assertIn("AngularJS", names(BuiltinProvider().detect(angular)))
+        self.assertIn("Alpine.js", names(BuiltinProvider().detect(alpine)))
+        self.assertIn("Preact", names(BuiltinProvider().detect(preact)))
+
     def test_builtin_implied_runtime_does_not_come_from_generic_headers(self):
         generic = BuiltinProvider().detect(
             make_fetch(headers={"X-Powered-By": "SomethingCustom", "Server": "WeirdServer/9.9"})
@@ -872,6 +929,23 @@ class ProviderTests(unittest.TestCase):
         self.assertNotIn("Laravel", detected_names)
         self.assertNotIn("Ruby on Rails", detected_names)
 
+    def test_laravel_body_rule_requires_runtime_error_context(self):
+        marketing = BuiltinProvider().detect(
+            make_fetch(
+                body=(
+                    '"vpsTemplatesLaravelHosting",'
+                    '"vps/laravel-hosting",'
+                    '"vpsTemplatesDjangoHosting"'
+                )
+            )
+        )
+        error_page = BuiltinProvider().detect(
+            make_fetch(body="Laravel Framework 11.0 Whoops, looks like something went wrong")
+        )
+
+        self.assertNotIn("Laravel", names(marketing))
+        self.assertIn("Laravel", names(error_page))
+
     def test_rails_specific_markers(self):
         fetch = make_fetch(
             headers={"X-Powered-By": "Phusion Passenger (mod_rails/mod_rack) 3.0.19"},
@@ -942,6 +1016,13 @@ class ProviderTests(unittest.TestCase):
 
         self.assertLessEqual({"JavaServer Faces", "Java EE/Jakarta EE"}, names(BuiltinProvider().detect(jsf)))
         self.assertLessEqual({"Spring", "Spring Security"}, names(BuiltinProvider().detect(spring)))
+
+    def test_java_ee_does_not_match_random_jsf_substrings(self):
+        detected = BuiltinProvider().detect(
+            make_fetch(body="3oEScMPxC6jsFLDkcIeGWg jsfTCn1jy90lcy JsfKwZRzSlrjy")
+        )
+
+        self.assertNotIn("Java EE/Jakarta EE", names(detected))
 
     def test_generic_cookie_patterns_do_not_overidentify_frameworks(self):
         detected = BuiltinProvider().detect(
