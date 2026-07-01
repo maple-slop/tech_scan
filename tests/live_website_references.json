@@ -525,5 +525,541 @@
         }
       }
     ]
+  },
+  {
+    "technology": "ASP.NET",
+    "dimension": "backend_framework",
+    "references": [
+      {
+        "url": "https://www.asp.net",
+        "source_url": "https://dotnet.microsoft.com/apps/aspnet",
+        "source_note": "Official ASP.NET entry point; current live page exposes ASP.NET builtin evidence.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 302,
+          "mode": "requests",
+          "detected": [
+            "ASP.NET"
+          ]
+        }
+      },
+      {
+        "url": "https://dotnet.microsoft.com",
+        "source_url": "https://dotnet.microsoft.com/apps/aspnet",
+        "source_note": "Official .NET site; current live page exposes ASP.NET builtin evidence.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 200,
+          "mode": "requests",
+          "detected": [
+            "ASP.NET"
+          ]
+        }
+      },
+      {
+        "url": "https://www.telerik.com",
+        "source_url": "https://www.telerik.com/aspnet-core-ui",
+        "source_note": "Telerik ships ASP.NET components; current live page exposes ASP.NET and Web Forms builtin evidence.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 200,
+          "mode": "requests",
+          "detected": [
+            "ASP.NET",
+            "ASP.NET Web Forms",
+            "Cloudflare",
+            "jQuery"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "technology": "Classic ASP",
+    "dimension": "backend_framework",
+    "references": [
+      {
+        "url": "https://www.w3schools.com/asp/default.asp",
+        "source_url": "https://www.w3schools.com/asp/default.asp",
+        "source_note": "Weak tutorial/path reference; current live page exposes Classic ASP URL-suffix builtin evidence, not production-runtime proof.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 200,
+          "mode": "requests",
+          "detected": [
+            "ASP.NET",
+            "Classic ASP",
+            "PHP"
+          ]
+        }
+      },
+      {
+        "url": "https://www.w3schools.com/asp/asp_examples.asp",
+        "source_url": "https://www.w3schools.com/asp/asp_examples.asp",
+        "source_note": "Weak tutorial/path reference; useful for detector regression around .asp links but not production-runtime proof.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 200,
+          "mode": "requests",
+          "detected": [
+            "ASP.NET",
+            "Classic ASP",
+            "PHP"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "technology": "Spring",
+    "dimension": "backend_framework",
+    "references": [
+      {
+        "url": "https://start.spring.io",
+        "source_url": "https://spring.io/projects/spring-boot",
+        "source_note": "Official Spring Initializr; current live page exposes Spring builtin evidence.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 200,
+          "mode": "requests",
+          "detected": [
+            "Java",
+            "Spring",
+            "Cloudflare",
+            "React"
+          ]
+        }
+      },
+      {
+        "url": "https://spring.io",
+        "source_url": "https://spring.io/",
+        "source_note": "Official Spring site; current live page exposes Spring builtin evidence.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 200,
+          "mode": "requests",
+          "detected": [
+            "Java",
+            "Spring",
+            "Cloudflare",
+            "Gatsby",
+            "React"
+          ]
+        }
+      },
+      {
+        "url": "https://www.baeldung.com",
+        "source_url": "https://www.baeldung.com/spring-tutorial",
+        "source_note": "Spring-heavy Java reference site; current live page exposes Spring builtin evidence.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 200,
+          "mode": "browser",
+          "detected": [
+            "Java",
+            "Spring",
+            "Cloudflare"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "technology": "Java",
+    "dimension": "backend_framework",
+    "references": [
+      {
+        "url": "https://start.spring.io",
+        "source_url": "https://spring.io/projects/spring-boot",
+        "source_note": "Official Spring Initializr; current live page exposes Java builtin evidence implied by Spring.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 200,
+          "mode": "requests",
+          "detected": [
+            "Java",
+            "Spring",
+            "Cloudflare",
+            "React"
+          ]
+        }
+      },
+      {
+        "url": "https://www.liferay.com",
+        "source_url": "https://www.liferay.com/products/dxp",
+        "source_note": "Official Liferay site; current live page exposes Java builtin evidence.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 200,
+          "mode": "requests",
+          "detected": [
+            "Java",
+            "Cloudflare",
+            "React"
+          ]
+        }
+      },
+      {
+        "url": "https://liferay.dev",
+        "source_url": "https://liferay.dev/",
+        "source_note": "Official Liferay developer site; current live page exposes Java and JSP builtin evidence.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 200,
+          "mode": "requests",
+          "detected": [
+            "Java",
+            "JSP",
+            "React"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "technology": "JSP",
+    "dimension": "backend_framework",
+    "references": [
+      {
+        "url": "https://liferay.dev",
+        "source_url": "https://liferay.dev/",
+        "source_note": "Liferay developer site; current live page exposes JSP builtin evidence.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 200,
+          "mode": "requests",
+          "detected": [
+            "Java",
+            "JSP",
+            "React"
+          ]
+        }
+      },
+      {
+        "url": "https://www.oracle.com/java/technologies/",
+        "source_url": "https://www.oracle.com/java/technologies/",
+        "source_note": "Oracle Java technologies page; current live page exposes JSP builtin evidence.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 200,
+          "mode": "requests",
+          "detected": [
+            "Java EE/Jakarta EE",
+            "JSP"
+          ]
+        }
+      },
+      {
+        "url": "https://www.honda.com.tr",
+        "source_url": "https://www.honda.com.tr",
+        "source_note": "Current live page previously exposed JSP builtin evidence.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 200,
+          "mode": "requests",
+          "detected": [
+            "Java",
+            "JSP",
+            "Qwik"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "technology": "Java EE/Jakarta EE",
+    "dimension": "backend_framework",
+    "references": [
+      {
+        "url": "https://jakarta.ee",
+        "source_url": "https://jakarta.ee/",
+        "source_note": "Official Jakarta EE site; current live page exposes Java EE/Jakarta EE builtin evidence.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 200,
+          "mode": "requests",
+          "detected": [
+            "Java EE/Jakarta EE",
+            "Netlify"
+          ]
+        }
+      },
+      {
+        "url": "https://www.oracle.com/java/technologies/",
+        "source_url": "https://www.oracle.com/java/technologies/",
+        "source_note": "Oracle Java technologies page; current live page exposes Java EE/Jakarta EE builtin evidence.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 200,
+          "mode": "requests",
+          "detected": [
+            "Java EE/Jakarta EE",
+            "JSP"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "technology": "WordPress",
+    "dimension": "cms",
+    "references": [
+      {
+        "url": "https://wordpress.org",
+        "source_url": "https://wordpress.org/",
+        "source_note": "Official WordPress site; CMS detection is out of current builtin scope, but current live page exposes PHP/nginx signals.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 200,
+          "mode": "requests",
+          "detected": [
+            "PHP",
+            "nginx"
+          ]
+        }
+      },
+      {
+        "url": "https://techcrunch.com",
+        "source_url": "https://wpvip.com/",
+        "source_note": "Current live page exposes a raw WordPress VIP X-Powered-By observation; CMS detection is out of current builtin scope.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 200,
+          "mode": "requests",
+          "detected": [
+            "PHP",
+            "nginx"
+          ]
+        }
+      },
+      {
+        "url": "https://www.whitehouse.gov",
+        "source_url": "https://wordpress.org/showcase/",
+        "source_note": "Listed in the official WordPress showcase; CMS detection is out of current builtin scope.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 200,
+          "mode": "requests",
+          "detected": [
+            "nginx"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "technology": "Drupal",
+    "dimension": "cms",
+    "references": [
+      {
+        "url": "https://www.drupal.org",
+        "source_url": "https://www.drupal.org/",
+        "source_note": "Official Drupal site; CMS detection is out of current builtin scope.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 200,
+          "mode": "browser",
+          "detected": [
+            "Varnish"
+          ]
+        }
+      },
+      {
+        "url": "https://www.acquia.com",
+        "source_url": "https://new.drupal.org/case-studies",
+        "source_note": "Drupal ecosystem reference; current live page exposes X-Generator: Drupal 10 as a raw observation.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 200,
+          "mode": "requests",
+          "detected": [
+            "Cloudflare",
+            "Varnish",
+            "Alpine.js"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "technology": "Liferay",
+    "dimension": "cms",
+    "references": [
+      {
+        "url": "https://www.liferay.com",
+        "source_url": "https://www.liferay.com/products/dxp",
+        "source_note": "Official Liferay site; CMS/portal detection is out of current builtin scope, but current live page exposes Java signals.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 200,
+          "mode": "requests",
+          "detected": [
+            "Java",
+            "Cloudflare",
+            "React"
+          ]
+        }
+      },
+      {
+        "url": "https://liferay.dev",
+        "source_url": "https://liferay.dev/",
+        "source_note": "Official Liferay developer site; current live page exposes Java and JSP builtin evidence.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 200,
+          "mode": "requests",
+          "detected": [
+            "Java",
+            "JSP",
+            "React"
+          ]
+        }
+      },
+      {
+        "url": "https://www.liferay.com/resources",
+        "source_url": "https://www.liferay.com/resources",
+        "source_note": "Official Liferay resource hub; CMS/portal detection is out of current builtin scope.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 200,
+          "mode": "requests",
+          "detected": [
+            "Cloudflare",
+            "React"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "technology": "Joomla",
+    "dimension": "cms",
+    "references": [
+      {
+        "url": "https://www.joomla.org",
+        "source_url": "https://www.joomla.org/",
+        "source_note": "Official Joomla site; CMS detection is out of current builtin scope.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 200,
+          "mode": "requests",
+          "detected": [
+            "Cloudflare",
+            "LiteSpeed Cache"
+          ]
+        }
+      },
+      {
+        "url": "https://community.joomla.org",
+        "source_url": "https://community.joomla.org/showcase/",
+        "source_note": "Official Joomla community/showcase site; CMS detection is out of current builtin scope.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 200,
+          "mode": "requests",
+          "detected": [
+            "Cloudflare",
+            "LiteSpeed Cache"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "technology": "TYPO3",
+    "dimension": "cms",
+    "references": [
+      {
+        "url": "https://www.typo3.org",
+        "source_url": "https://typo3.org/",
+        "source_note": "Official TYPO3 site; CMS detection is out of current builtin scope.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 301,
+          "mode": "requests",
+          "detected": [
+            "Apache"
+          ]
+        }
+      },
+      {
+        "url": "https://typo3.com",
+        "source_url": "https://typo3.com/",
+        "source_note": "Official TYPO3 commercial site; CMS detection is out of current builtin scope.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 200,
+          "mode": "requests",
+          "detected": [
+            "Apache"
+          ]
+        }
+      },
+      {
+        "url": "https://demo.typo3.org",
+        "source_url": "https://demo.typo3.org/",
+        "source_note": "Official TYPO3 demo site; CMS detection is out of current builtin scope.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 200,
+          "mode": "requests",
+          "detected": [
+            "Apache"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "technology": "Shopware",
+    "dimension": "cms",
+    "references": [
+      {
+        "url": "https://www.shopware.com",
+        "source_url": "https://www.shopware.com/",
+        "source_note": "Official Shopware site; ecommerce/CMS detection is out of current builtin scope, but the site is useful for frontend/server signal regressions.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 200,
+          "mode": "browser",
+          "detected": [
+            "nginx",
+            "Varnish",
+            "Nuxt",
+            "Vue.js"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "technology": "Adobe Commerce/Magento",
+    "dimension": "cms",
+    "references": [
+      {
+        "url": "https://magento.com",
+        "source_url": "https://business.adobe.com/products/magento/magento-commerce.html",
+        "source_note": "Official Magento/Adobe Commerce redirecting entry point; ecommerce/CMS detection is out of current builtin scope.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 301,
+          "mode": "requests",
+          "detected": [
+            "nginx"
+          ]
+        }
+      },
+      {
+        "url": "https://www.adobe.com",
+        "source_url": "https://business.adobe.com/products/magento/magento-commerce.html",
+        "source_note": "Adobe product/reference site; ecommerce/CMS detection is out of current builtin scope.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 200,
+          "mode": "requests",
+          "detected": []
+        }
+      }
+    ]
   }
 ]
