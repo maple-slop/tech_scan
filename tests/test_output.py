@@ -565,6 +565,42 @@ class OutputTests(unittest.TestCase):
         self.assertIn("scan interrupted", stderr.getvalue())
         self.assertNotIn("Traceback", stderr.getvalue())
 
+    def test_requests_workers_are_daemon_threads_for_tty_sigint(self):
+        created_threads = []
+        real_thread = threading.Thread
+
+        class RecordingThread(real_thread):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                created_threads.append(self)
+
+        def interrupted(*args, **kwargs):
+            raise KeyboardInterrupt
+
+        with TemporaryDirectory() as tmpdir:
+            args = [
+                "--db",
+                str(Path(tmpdir) / "results.db"),
+                "--mode",
+                "requests",
+                "--output",
+                "jsonl",
+                "--verbosity",
+                "1",
+            ]
+            with patch("tech_scan.scheduler.threading.Thread", RecordingThread):
+                with patch("tech_scan.scheduler.scan_input", side_effect=interrupted):
+                    with patch("sys.stdin", io.StringIO("a.example\n")):
+                        stdout = io.StringIO()
+                        stderr = io.StringIO()
+                        with redirect_stdout(stdout), redirect_stderr(stderr):
+                            self.assertEqual(main(args), 130)
+
+        self.assertTrue(created_threads)
+        self.assertTrue(all(thread.daemon for thread in created_threads))
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertIn("scan interrupted", stderr.getvalue())
+
     def test_async_browser_sigint_closes_pool_and_returns_130(self):
         pools = []
 

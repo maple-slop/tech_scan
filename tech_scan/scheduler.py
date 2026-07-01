@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import queue
+import threading
 from typing import Any, Callable
 
 from .fetchers.browser import AsyncBrowserPool
@@ -25,29 +26,60 @@ def run_requests(
     provider_names: list[str],
     print_result: ResultPrinter,
 ) -> int:
-    executor = ThreadPoolExecutor(max_workers=args.concurrency)
-    futures = [
-        executor.submit(
-            scan_input,
-            target,
-            args,
-            providers_requested,
-            provider_names,
-            None,
-        )
-        for target in targets
+    stop_event = threading.Event()
+    task_queue: queue.Queue[str | None] = queue.Queue()
+    result_queue: queue.Queue[tuple[BaseException | None, list[dict[str, Any]] | None]] = queue.Queue()
+
+    for target in targets:
+        task_queue.put(target)
+    worker_count = min(args.concurrency, len(targets)) if targets else 0
+    for _ in range(worker_count):
+        task_queue.put(None)
+
+    def worker() -> None:
+        while not stop_event.is_set():
+            target = task_queue.get()
+            if target is None:
+                return
+            try:
+                result_queue.put((
+                    None,
+                    scan_input(
+                        target,
+                        args,
+                        providers_requested,
+                        provider_names,
+                        None,
+                    ),
+                ))
+            except BaseException as exc:
+                result_queue.put((exc, None))
+
+    workers = [
+        threading.Thread(target=worker, name=f"tech-scan-request-{index}", daemon=True)
+        for index in range(worker_count)
     ]
+    for worker_thread in workers:
+        worker_thread.start()
+
+    completed = 0
     try:
-        for future in as_completed(futures):
-            for result in future.result():
+        while completed < len(targets):
+            try:
+                error, results = result_queue.get(timeout=0.1)
+            except queue.Empty:
+                continue
+            completed += 1
+            if error is not None:
+                if isinstance(error, KeyboardInterrupt):
+                    raise error
+                raise error
+            for result in results or []:
                 print_result(result)
     except KeyboardInterrupt:
         _log_interrupted(args)
-        for future in futures:
-            future.cancel()
-        executor.shutdown(wait=False, cancel_futures=True)
+        stop_event.set()
         return 130
-    executor.shutdown(wait=True)
     return 0
 
 
