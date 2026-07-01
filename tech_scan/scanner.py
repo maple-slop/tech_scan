@@ -6,6 +6,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Awaitable, Callable
+from urllib.parse import urlparse
 
 from .cache import ResponseCache, cache_disposition
 from .cli_config import fetch_identity, requests_verify
@@ -22,6 +23,7 @@ from .normalize import expand_targets
 from .observations import browser_fallback_failed_observation, collect_header_observations
 from .providers import build_providers, merge_findings
 from .sanity import check_target_ports
+from .url_policy import same_hostname
 
 
 BlockingRunner = Callable[..., Awaitable[Any]]
@@ -40,6 +42,23 @@ async def run_blocking_in_thread(func: Callable[..., Any], *args: Any, **kwargs:
 
 async def run_blocking_direct(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
     return func(*args, **kwargs)
+
+
+def _redirect_alias_targets(source_url: str, fetch: FetchResult) -> list[str]:
+    aliases = []
+    for resource in fetch.resources:
+        if resource.kind != "redirect" or not resource.final_url:
+            continue
+        parsed = urlparse(resource.final_url)
+        if parsed.scheme not in {"http", "https"}:
+            continue
+        if resource.final_url == source_url:
+            continue
+        if not same_hostname(source_url, resource.final_url):
+            continue
+        if resource.final_url not in aliases:
+            aliases.append(resource.final_url)
+    return aliases
 
 
 class ScanRunner:
@@ -217,6 +236,12 @@ class ScanRunner:
                 cache_outcome.reason = disposition.reason
                 if disposition.cacheable:
                     cache.set(target, mode, self.args.proxy, fresh_fetch, identity)
+                    for alias in _redirect_alias_targets(target, fresh_fetch):
+                        cache.set(alias, mode, self.args.proxy, fresh_fetch, identity)
+                        self.diagnostics.log(
+                            3,
+                            f"cache alias write: source={target} alias={alias} mode={mode}",
+                        )
                     cache_outcome.stored = True
                     self.diagnostics.log(
                         3,

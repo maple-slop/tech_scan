@@ -6,7 +6,7 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from tech_scan.diagnostics import Diagnostics
-from tech_scan.models import FetchResult
+from tech_scan.models import FetchResult, ResourceObservation
 from tech_scan.scanner import scan_input, scan_target as scan_concrete_target
 from tech_scan.sanity import SanityResult
 
@@ -124,6 +124,51 @@ class CliCacheTests(unittest.TestCase):
 
         self.assertEqual([result["url"] for result in results], ["http://example.com", "https://example.com"])
         self.assertEqual([result["final_url"] for result in results], ["https://example.com", "https://example.com"])
+
+    def test_bare_domain_same_host_redirect_alias_avoids_second_fetch(self):
+        with TemporaryDirectory() as tmpdir:
+            db = Path(tmpdir) / "results.db"
+            redirect = ResourceObservation(
+                id="redirect:0",
+                kind="redirect",
+                url="http://example.com",
+                final_url="https://example.com",
+                status=301,
+                headers={"location": "https://example.com"},
+                cookies={},
+                body="",
+            )
+            document = ResourceObservation(
+                id="document:0",
+                kind="document",
+                url="http://example.com",
+                final_url="https://example.com",
+                status=200,
+                headers={"server": "Apache"},
+                cookies={},
+                body="ok",
+            )
+            fetch = FetchResult(
+                input="example.com",
+                url=document.url,
+                final_url=document.final_url,
+                status=document.status,
+                headers=document.headers,
+                cookies=document.cookies,
+                body=document.body,
+                mode="requests",
+                resources=[redirect, document],
+                primary_resource_id=document.id,
+            )
+
+            with patch("tech_scan.scanner.fetch_requests", return_value=fetch) as fetch_mock:
+                results = scan_input("example.com", args_for(db), ["builtin"], ["builtin"])
+
+        self.assertEqual([result["url"] for result in results], ["http://example.com", "https://example.com"])
+        self.assertEqual([result["cached"] for result in results], [False, True])
+        self.assertEqual([result["cache_lookup"] for result in results], ["miss", "hit"])
+        self.assertEqual(fetch_mock.call_count, 1)
+        self.assertEqual(self.sanity_mock.call_count, 1)
 
     def test_scan_input_explicit_scheme_uses_single_concrete_target(self):
         with TemporaryDirectory() as tmpdir:
@@ -364,6 +409,66 @@ class CliCacheTests(unittest.TestCase):
         self.assertEqual(second["cache_lookup"], "hit")
         self.assertIsNone(second["cache_stored"])
         self.assertEqual(fetch_mock.call_count, 1)
+
+    def test_same_host_redirect_alias_is_reused_by_explicit_target(self):
+        with TemporaryDirectory() as tmpdir:
+            db = Path(tmpdir) / "results.db"
+            redirect = ResourceObservation(
+                id="redirect:0",
+                kind="redirect",
+                url="http://example.com",
+                final_url="https://example.com",
+                status=301,
+                headers={"location": "https://example.com"},
+                cookies={},
+                body="",
+            )
+            document = ResourceObservation(
+                id="document:0",
+                kind="document",
+                url="http://example.com",
+                final_url="https://example.com",
+                status=200,
+                headers={"server": "Apache"},
+                cookies={},
+                body="ok",
+            )
+            fetch = FetchResult(
+                input="example.com",
+                url=document.url,
+                final_url=document.final_url,
+                status=document.status,
+                headers=document.headers,
+                cookies=document.cookies,
+                body=document.body,
+                mode="requests",
+                resources=[redirect, document],
+                primary_resource_id=document.id,
+            )
+
+            with patch("tech_scan.scanner.fetch_requests", return_value=fetch) as fetch_mock:
+                first = scan_concrete_target(
+                    "example.com",
+                    "http://example.com",
+                    args_for(db),
+                    ["builtin"],
+                    ["builtin"],
+                )
+                second = scan_concrete_target(
+                    "example.com",
+                    "https://example.com",
+                    args_for(db),
+                    ["builtin"],
+                    ["builtin"],
+                )
+
+        self.assertFalse(first["cached"])
+        self.assertEqual(first["cache_lookup"], "miss")
+        self.assertTrue(first["cache_stored"])
+        self.assertTrue(second["cached"])
+        self.assertEqual(second["cache_lookup"], "hit")
+        self.assertEqual(fetch_mock.call_count, 1)
+        self.assertEqual(self.sanity_mock.call_count, 1)
 
     def test_cross_host_redirect_block_is_cached_and_reported(self):
         with TemporaryDirectory() as tmpdir:

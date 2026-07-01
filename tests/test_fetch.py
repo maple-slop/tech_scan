@@ -305,6 +305,12 @@ class FetchTests(unittest.TestCase):
         self.assertEqual(result.final_url, "https://example.com/login")
         self.assertEqual(result.status, 200)
         self.assertEqual(result.headers, {"server": "Apache"})
+        redirects = [resource for resource in result.resources if resource.kind == "redirect"]
+        self.assertEqual(len(redirects), 1)
+        self.assertEqual(redirects[0].url, "https://example.com")
+        self.assertEqual(redirects[0].final_url, "https://example.com/login")
+        self.assertEqual(redirects[0].status, 302)
+        self.assertEqual(result.primary_resource.kind, "document")
 
     def test_requests_passes_proxy_and_tls_options(self):
         session = FakeSession([FakeResponse("https://example.com", 200, {}, "ok")])
@@ -646,6 +652,10 @@ class FetchTests(unittest.TestCase):
         self.assertEqual(result.final_url, "https://example.com")
         self.assertEqual(result.status, 302)
         self.assertEqual(result.body, "")
+        self.assertEqual(
+            [resource.kind for resource in result.resources],
+            ["document"],
+        )
 
     def test_requests_redirect_trace_uses_diagnostics(self):
         stderr = io.StringIO()
@@ -768,6 +778,58 @@ class FetchTests(unittest.TestCase):
         self.assertEqual(by_url["https://example.com/app.css"].body, "body{}")
         self.assertEqual(by_url["https://example.com/logo.png"].body, "")
         self.assertEqual(by_url["https://example.com/broken.js"].error, "body failed")
+
+    def test_async_browser_pool_records_redirect_resources(self):
+        class RedirectPage(AsyncFakePage):
+            async def goto(self, url, **kwargs):
+                self.url = "https://example.com/app"
+                responses = [
+                    AsyncFakeBrowserResponse(
+                        url,
+                        "document",
+                        status=301,
+                        headers={"location": "https://example.com/app"},
+                    ),
+                    AsyncFakeBrowserResponse(
+                        "https://example.com/app",
+                        "document",
+                        status=200,
+                        headers={"server": "Chromium"},
+                        body=b"<html></html>",
+                    ),
+                ]
+                for response in responses:
+                    for handler in self.handlers.get("response", []):
+                        handler(response)
+                return responses[-1]
+
+        class RedirectContext(AsyncFakeContext):
+            async def new_page(self):
+                page = RedirectPage()
+                self.pages.append(page)
+                return page
+
+        class RedirectBrowser(AsyncFakeBrowser):
+            async def new_context(self, **kwargs):
+                context = RedirectContext(self)
+                self.contexts.append((context, kwargs))
+                return context
+
+        async def run():
+            playwright = AsyncFakePlaywright()
+            playwright.chromium.browser = RedirectBrowser()
+            with install_fake_async_playwright(playwright):
+                async with AsyncBrowserPool(proxy=None, concurrency=1, enable_extension=False) as pool:
+                    return await pool.fetch("example.com", "http://example.com", 5)
+
+        result = asyncio.run(run())
+
+        self.assertEqual(result.primary_resource.kind, "document")
+        redirects = [resource for resource in result.resources if resource.kind == "redirect"]
+        self.assertEqual(len(redirects), 1)
+        self.assertEqual(redirects[0].url, "http://example.com")
+        self.assertEqual(redirects[0].final_url, "https://example.com/app")
+        self.assertEqual(redirects[0].status, 301)
 
     def test_async_browser_startup_errors_include_traceback(self):
         class BrokenChromium(AsyncFakeChromium):

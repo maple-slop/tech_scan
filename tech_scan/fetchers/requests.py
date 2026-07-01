@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import warnings
+from dataclasses import dataclass
 from urllib.parse import urljoin
 
 import requests
@@ -16,6 +17,12 @@ from .headers import REQUESTS_HEADERS
 
 MAX_SCRIPT_RESOURCES = 25
 MAX_SCRIPT_BODY_BYTES = 1024 * 1024
+
+
+@dataclass(frozen=True)
+class RedirectFetch:
+    response: requests.Response
+    redirects: list[ResourceObservation]
 
 
 def _cookie_dict(cookies: requests.cookies.RequestsCookieJar) -> dict[str, str]:
@@ -37,6 +44,19 @@ def _limited_text(response: requests.Response, max_bytes: int | None = None) -> 
     return content.decode(encoding, errors="replace")
 
 
+def _redirect_resource(resource_id: str, url: str, next_url: str, response: requests.Response) -> ResourceObservation:
+    return ResourceObservation(
+        id=resource_id,
+        kind="redirect",
+        url=url,
+        final_url=next_url,
+        status=response.status_code,
+        headers={k.lower(): v for k, v in response.headers.items()},
+        cookies=_cookie_dict(response.cookies),
+        body="",
+    )
+
+
 def _get_with_same_host_redirects(
     session: requests.Session,
     url: str,
@@ -44,9 +64,10 @@ def _get_with_same_host_redirects(
     proxies: dict[str, str] | None,
     request_kwargs: dict[str, object],
     diagnostics: Diagnostics | None = None,
-) -> requests.Response:
+) -> RedirectFetch:
     current_url = url
     response = None
+    redirects: list[ResourceObservation] = []
     for _ in range(10):
         if request_kwargs.get("verify") is False:
             with warnings.catch_warnings():
@@ -77,14 +98,22 @@ def _get_with_same_host_redirects(
                     1,
                     f"requests redirect stopped: {current_url} -> {next_url} "
                     f"(cross-host)",
-                )
+            )
             break
+        redirects.append(
+            _redirect_resource(
+                f"redirect:{len(redirects)}",
+                current_url,
+                next_url,
+                response,
+            )
+        )
         if diagnostics:
             diagnostics.log(1, f"requests redirect: {current_url} -> {next_url}")
         current_url = next_url
     if response is None:
         raise requests.RequestException("request failed")
-    return response
+    return RedirectFetch(response=response, redirects=redirects)
 
 
 def _resource_from_response(
@@ -147,7 +176,7 @@ def fetch_requests(
     try:
         if diagnostics:
             diagnostics.log(3, f"requests fetch start: {url}")
-        response = _get_with_same_host_redirects(
+        redirect_fetch = _get_with_same_host_redirects(
             session,
             url,
             timeout,
@@ -155,6 +184,7 @@ def fetch_requests(
             request_kwargs,
             diagnostics,
         )
+        response = redirect_fetch.response
         document = _resource_from_response("document:0", "document", url, response)
         if diagnostics:
             diagnostics.log(
@@ -164,7 +194,7 @@ def fetch_requests(
             )
         body = document.body
         script_srcs = extract_script_srcs(body)
-        resources = [document]
+        resources = [*redirect_fetch.redirects, document]
         base_url = response.url or url
         for index, src in enumerate(script_srcs[:MAX_SCRIPT_RESOURCES]):
             script_url = urljoin(base_url, src)
@@ -176,7 +206,7 @@ def fetch_requests(
             try:
                 if diagnostics:
                     diagnostics.log(3, f"requests script fetch start: {script_url}")
-                script_response = _get_with_same_host_redirects(
+                script_fetch = _get_with_same_host_redirects(
                     session,
                     script_url,
                     timeout,
@@ -184,6 +214,7 @@ def fetch_requests(
                     request_kwargs,
                     diagnostics,
                 )
+                script_response = script_fetch.response
                 resources.append(
                     _resource_from_response(
                         resource_id,

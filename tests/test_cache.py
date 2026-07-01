@@ -107,7 +107,7 @@ def make_sanity_fetch(error: str):
 
 class CacheTests(unittest.TestCase):
     def test_fetch_profile_version_bumped_for_requests_header_identity(self):
-        self.assertEqual(FETCH_PROFILE_VERSION, "v6")
+        self.assertEqual(FETCH_PROFILE_VERSION, "v7")
 
     def test_requests_observation_roundtrip(self):
         with TemporaryDirectory() as tmpdir:
@@ -130,6 +130,55 @@ class CacheTests(unittest.TestCase):
             self.assertIsInstance(cached.primary_resource.cache_created_at, int)
             self.assertIsInstance(cached.primary_resource.cache_updated_at, int)
             self.assertIsInstance(cached.script_resources[0].cache_created_at, int)
+
+    def test_redirect_observation_roundtrip(self):
+        redirect = ResourceObservation(
+            id="redirect:0",
+            kind="redirect",
+            url="http://example.com",
+            final_url="https://example.com",
+            status=301,
+            headers={"location": "https://example.com"},
+            cookies={},
+            body="",
+        )
+        document = ResourceObservation(
+            id="document:0",
+            kind="document",
+            url="http://example.com",
+            final_url="https://example.com",
+            status=200,
+            headers={"server": "Apache"},
+            cookies={},
+            body="ok",
+        )
+        fetch = FetchResult(
+            input="example.com",
+            url=document.url,
+            final_url=document.final_url,
+            status=document.status,
+            headers=document.headers,
+            cookies=document.cookies,
+            body=document.body,
+            mode="requests",
+            resources=[redirect, document],
+            primary_resource_id=document.id,
+        )
+
+        with TemporaryDirectory() as tmpdir:
+            with ResponseCache(Path(tmpdir) / "results.db") as cache:
+                cache.set("http://example.com", "requests", None, fetch)
+
+                cached = cache.get("http://example.com", "requests", None, 86400)
+
+        self.assertIsNotNone(cached)
+        assert cached is not None
+        self.assertEqual(cached.primary_resource.kind, "document")
+        redirects = [resource for resource in cached.resources if resource.kind == "redirect"]
+        self.assertEqual(len(redirects), 1)
+        self.assertEqual(redirects[0].url, "http://example.com")
+        self.assertEqual(redirects[0].final_url, "https://example.com")
+        self.assertEqual(redirects[0].status, 301)
 
     def test_cached_fetch_url_uses_concrete_cache_target(self):
         with TemporaryDirectory() as tmpdir:

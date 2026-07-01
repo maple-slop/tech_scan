@@ -14,7 +14,7 @@ from tech_scan.diagnostics import Diagnostics, exception_with_traceback, short_e
 from tech_scan.models import FetchResult, ResourceObservation
 
 from .headers import BROWSER_HEADERS
-from tech_scan.url_policy import same_hostname
+from tech_scan.url_policy import redirect_target, same_hostname
 
 UBOL_PACKAGE = "tech_scan.fetchers.data.ubol"
 UBOL_VERSION = "2026.628.2035"
@@ -65,8 +65,25 @@ def _resource_type(response: object) -> str:
     return str(resource_type or "other")
 
 
+def _is_redirect_status(status: object) -> bool:
+    return status in {301, 302, 303, 307, 308}
+
+
 def _is_http_url(url: str) -> bool:
     return urlparse(url).scheme in {"http", "https"}
+
+
+def _browser_resource_kind(response: object, final_url: str | None = None) -> str:
+    kind = _resource_type(response)
+    status = _value(response, "status", None)
+    url = str(_value(response, "url", ""))
+    if (
+        kind == "document"
+        and _is_redirect_status(status)
+        and (final_url is None or url != final_url)
+    ):
+        return "redirect"
+    return kind
 
 
 def _is_text_resource(kind: str, headers: dict[str, str]) -> bool:
@@ -118,16 +135,19 @@ async def _async_resource_from_browser_response(
     url = str(_value(response, "url", ""))
     if not _is_http_url(url):
         return None
-    kind = _resource_type(response)
+    kind = _browser_resource_kind(response)
     headers = _headers(response)
     body, error = await _async_response_body(response, kind, headers, diagnostics)
     status = _value(response, "status", None)
+    final_url = url
+    if kind == "redirect":
+        final_url = redirect_target(url, headers.get("location")) or url
     return ResourceObservation(
         id=resource_id,
         parent_id=parent_id,
         kind=kind,
         url=url,
-        final_url=url,
+        final_url=final_url,
         status=int(status) if status is not None else None,
         headers=headers,
         cookies={},
@@ -365,7 +385,7 @@ class AsyncBrowserPool:
             counters: dict[str, int] = {"document": 1}
             for observed in observed_responses:
                 observed_url = str(_value(observed, "url", ""))
-                observed_kind = _resource_type(observed)
+                observed_kind = _browser_resource_kind(observed, final_url)
                 if observed_kind == "document" and observed_url == final_url:
                     continue
                 resource = await _async_resource_from_browser_response(

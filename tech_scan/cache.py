@@ -10,7 +10,7 @@ from pathlib import Path
 from .models import FetchResult, ResourceObservation
 
 
-FETCH_PROFILE_VERSION = "v6"
+FETCH_PROFILE_VERSION = "v7"
 
 
 @dataclass(frozen=True)
