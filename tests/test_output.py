@@ -899,6 +899,115 @@ class OutputTests(unittest.TestCase):
         self.assertEqual(stdout.getvalue(), "")
         self.assertIn("scan interrupted", stderr.getvalue())
 
+    def test_requests_sigint_does_not_start_pending_targets(self):
+        started = []
+
+        def fake_scan_input(target, *args, **kwargs):
+            started.append(target)
+            raise KeyboardInterrupt
+
+        with TemporaryDirectory() as tmpdir:
+            args = [
+                "--db",
+                str(Path(tmpdir) / "results.db"),
+                "--mode",
+                "requests",
+                "--output",
+                "jsonl",
+                "--verbosity",
+                "1",
+                "--concurrency",
+                "1",
+            ]
+            with patch("tech_scan.scheduler.scan_input", side_effect=fake_scan_input):
+                with patch("sys.stdin", io.StringIO("a.example\nb.example\n")):
+                    stdout = io.StringIO()
+                    stderr = io.StringIO()
+                    with redirect_stdout(stdout), redirect_stderr(stderr):
+                        self.assertEqual(main(args), 130)
+
+        self.assertEqual(started, ["a.example"])
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertEqual(stderr.getvalue().count("scan interrupted"), 1)
+
+    def test_requests_late_result_after_sigint_is_ignored(self):
+        first_running = threading.Event()
+        release_first = threading.Event()
+
+        def fake_scan_input(target, *args, emit_result=None, **kwargs):
+            if target == "a.example":
+                first_running.set()
+                release_first.wait(timeout=5)
+                assert emit_result is not None
+                emit_result(RESULT)
+                return [RESULT]
+            self.assertTrue(first_running.wait(timeout=5))
+            raise KeyboardInterrupt
+
+        with TemporaryDirectory() as tmpdir:
+            args = [
+                "--db",
+                str(Path(tmpdir) / "results.db"),
+                "--mode",
+                "requests",
+                "--output",
+                "jsonl",
+                "--verbosity",
+                "1",
+                "--concurrency",
+                "2",
+            ]
+            with patch("tech_scan.scheduler.scan_input", side_effect=fake_scan_input):
+                with patch("sys.stdin", io.StringIO("a.example\nb.example\n")):
+                    stdout = io.StringIO()
+                    stderr = io.StringIO()
+                    with redirect_stdout(stdout), redirect_stderr(stderr):
+                        self.assertEqual(main(args), 130)
+                    release_first.set()
+
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertEqual(stderr.getvalue().count("scan interrupted"), 1)
+
+    def test_requests_sigint_returns_without_waiting_for_blocked_worker(self):
+        first_running = threading.Event()
+        release_first = threading.Event()
+
+        def fake_scan_input(target, *args, **kwargs):
+            if target == "a.example":
+                first_running.set()
+                release_first.wait(timeout=5)
+                return []
+            self.assertTrue(first_running.wait(timeout=5))
+            raise KeyboardInterrupt
+
+        with TemporaryDirectory() as tmpdir:
+            args = [
+                "--db",
+                str(Path(tmpdir) / "results.db"),
+                "--mode",
+                "requests",
+                "--output",
+                "jsonl",
+                "--verbosity",
+                "1",
+                "--concurrency",
+                "2",
+            ]
+            with patch("tech_scan.scheduler.scan_input", side_effect=fake_scan_input):
+                with patch("sys.stdin", io.StringIO("a.example\nb.example\n")):
+                    stdout = io.StringIO()
+                    stderr = io.StringIO()
+                    started = time.monotonic()
+                    try:
+                        with redirect_stdout(stdout), redirect_stderr(stderr):
+                            self.assertEqual(main(args), 130)
+                    finally:
+                        release_first.set()
+
+        self.assertLess(time.monotonic() - started, 2.0)
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertEqual(stderr.getvalue().count("scan interrupted"), 1)
+
     def test_async_browser_sigint_closes_pool_and_returns_130(self):
         pools = []
 
@@ -940,6 +1049,59 @@ class OutputTests(unittest.TestCase):
         self.assertTrue(pools[0].closed)
         self.assertIn("scan interrupted", stderr.getvalue())
         self.assertNotIn("Traceback", stderr.getvalue())
+
+    def test_async_browser_late_result_after_sigint_is_ignored(self):
+        pools = []
+        first_started = asyncio.Event()
+
+        class FakeAsyncBrowserPool:
+            def __init__(self, *args, **kwargs):
+                self.closed = False
+                pools.append(self)
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, exc_type, exc, tb):
+                self.closed = True
+
+        async def fake_scan_input(target, *args, emit_result=None, **kwargs):
+            if target == "a.example":
+                first_started.set()
+                try:
+                    await asyncio.sleep(30)
+                except asyncio.CancelledError:
+                    assert emit_result is not None
+                    emit_result(RESULT)
+                    return []
+            await first_started.wait()
+            raise KeyboardInterrupt
+
+        with TemporaryDirectory() as tmpdir:
+            args = [
+                "--db",
+                str(Path(tmpdir) / "results.db"),
+                "--mode",
+                "browser",
+                "--output",
+                "jsonl",
+                "--verbosity",
+                "1",
+                "--concurrency",
+                "2",
+            ]
+            with patch("tech_scan.scheduler.AsyncBrowserPool", FakeAsyncBrowserPool):
+                with patch("tech_scan.scheduler.scan_input_async", side_effect=fake_scan_input):
+                    with patch("sys.stdin", io.StringIO("a.example\nb.example\n")):
+                        stdout = io.StringIO()
+                        stderr = io.StringIO()
+                        with redirect_stdout(stdout), redirect_stderr(stderr):
+                            self.assertEqual(main(args), 130)
+
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertTrue(pools)
+        self.assertTrue(pools[0].closed)
+        self.assertEqual(stderr.getvalue().count("scan interrupted"), 1)
 
     def test_human_first_line_uses_origin_not_redirected_url(self):
         result = RESULT.to_json()

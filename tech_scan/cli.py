@@ -187,7 +187,9 @@ def main(argv: list[str] | None = None) -> int:
                 )
             )
         except KeyboardInterrupt:
-            args._diagnostics.log(1, "scan interrupted; cancelling pending work")
+            if not getattr(args, "_interrupted_logged", False):
+                args._interrupted_logged = True
+                args._diagnostics.log(1, "scan interrupted; cancelling pending work")
             return 130
 
     return run_requests(
