@@ -2,6 +2,7 @@ import asyncio
 import io
 import json
 import threading
+import time
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
@@ -48,6 +49,15 @@ RESULT = {
 
 
 class OutputTests(unittest.TestCase):
+    def wait_for_stdout_lines(self, stdout, count, timeout=5):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            lines = stdout.getvalue().splitlines()
+            if len(lines) >= count:
+                return lines
+            time.sleep(0.001)
+        return stdout.getvalue().splitlines()
+
     def test_jsonl_format_matches_sorted_json_dump(self):
         self.assertEqual(format_jsonl(RESULT), json.dumps(RESULT, sort_keys=True))
 
@@ -434,12 +444,14 @@ class OutputTests(unittest.TestCase):
                             target=lambda: exit_code.setdefault("value", main(args))
                         )
                         thread.start()
-                        self.assertTrue(first_emitted.wait(timeout=5))
-                        lines = stdout.getvalue().splitlines()
-                        self.assertEqual(len(lines), 1)
-                        self.assertEqual(json.loads(lines[0])["url"], "http://example.com/")
-                        release_second.set()
-                        thread.join(timeout=5)
+                        try:
+                            self.assertTrue(first_emitted.wait(timeout=5))
+                            lines = self.wait_for_stdout_lines(stdout, 1)
+                            self.assertEqual(len(lines), 1)
+                            self.assertEqual(json.loads(lines[0])["url"], "http://example.com/")
+                        finally:
+                            release_second.set()
+                            thread.join(timeout=5)
 
         self.assertFalse(thread.is_alive())
         self.assertEqual(exit_code["value"], 0)
@@ -635,12 +647,14 @@ class OutputTests(unittest.TestCase):
                                 target=lambda: exit_code.setdefault("value", main(args))
                             )
                             thread.start()
-                            self.assertTrue(first_emitted.wait(timeout=5))
-                            lines = stdout.getvalue().splitlines()
-                            self.assertEqual(len(lines), 1)
-                            self.assertEqual(json.loads(lines[0])["url"], "http://example.com/")
-                            release_second.set()
-                            thread.join(timeout=5)
+                            try:
+                                self.assertTrue(first_emitted.wait(timeout=5))
+                                lines = self.wait_for_stdout_lines(stdout, 1)
+                                self.assertEqual(len(lines), 1)
+                                self.assertEqual(json.loads(lines[0])["url"], "http://example.com/")
+                            finally:
+                                release_second.set()
+                                thread.join(timeout=5)
 
         self.assertFalse(thread.is_alive())
         self.assertEqual(exit_code["value"], 0)
@@ -766,12 +780,14 @@ class OutputTests(unittest.TestCase):
                                 target=lambda: exit_code.setdefault("value", main(args))
                             )
                             thread.start()
-                            self.assertTrue(first_emitted.wait(timeout=5))
-                            lines = stdout.getvalue().splitlines()
-                            self.assertEqual(len(lines), 1)
-                            self.assertEqual(json.loads(lines[0])["url"], "http://example.com/")
-                            release_second.set()
-                            thread.join(timeout=5)
+                            try:
+                                self.assertTrue(first_emitted.wait(timeout=5))
+                                lines = self.wait_for_stdout_lines(stdout, 1)
+                                self.assertEqual(len(lines), 1)
+                                self.assertEqual(json.loads(lines[0])["url"], "http://example.com/")
+                            finally:
+                                release_second.set()
+                                thread.join(timeout=5)
 
         self.assertFalse(thread.is_alive())
         self.assertEqual(exit_code["value"], 0)

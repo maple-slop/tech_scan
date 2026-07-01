@@ -1,33 +1,20 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
 from contextlib import ExitStack
 from importlib import resources
-import inspect
 import os
 import shutil
 import tempfile
-from urllib.parse import urlparse
 
 from tech_scan.diagnostics import Diagnostics, exception_with_traceback, short_exception
-from tech_scan.models import FetchResult, ResourceObservation
+from tech_scan.models import FetchResult
 
 from .headers import BROWSER_HEADERS
-from tech_scan.url_policy import redirect_target, same_hostname
+from .browser_capture import capture_browser_page, maybe_await
 
 UBOL_PACKAGE = "tech_scan.fetchers.data.ubol"
 UBOL_VERSION = "2026.628.2035"
-MAX_RESOURCE_BODY_BYTES = 1024 * 1024
-TEXT_RESOURCE_TYPES = {"document", "script", "stylesheet", "xhr", "fetch"}
-TEXT_CONTENT_MARKERS = [
-    "text/",
-    "javascript",
-    "json",
-    "xml",
-    "html",
-    "css",
-]
 
 
 def chromium_executable_path() -> str | None:
@@ -45,115 +32,6 @@ def ubol_extension_path() -> str:
 
 def browser_extension_identity(enabled: bool) -> str:
     return f"extension:ubol:{UBOL_VERSION}" if enabled else "extension:none"
-
-
-def _value(obj: object, name: str, default: object = None) -> object:
-    value = getattr(obj, name, default)
-    return value() if callable(value) else value
-
-
-def _headers(response: object) -> dict[str, str]:
-    raw = _value(response, "headers", {})
-    if isinstance(raw, Mapping):
-        return {str(key).lower(): str(value) for key, value in raw.items()}
-    return {}
-
-
-def _resource_type(response: object) -> str:
-    request = _value(response, "request")
-    resource_type = _value(request, "resource_type", None) if request is not None else None
-    return str(resource_type or "other")
-
-
-def _is_redirect_status(status: object) -> bool:
-    return status in {301, 302, 303, 307, 308}
-
-
-def _is_http_url(url: str) -> bool:
-    return urlparse(url).scheme in {"http", "https"}
-
-
-def _browser_resource_kind(response: object, final_url: str | None = None) -> str:
-    kind = _resource_type(response)
-    status = _value(response, "status", None)
-    url = str(_value(response, "url", ""))
-    if (
-        kind == "document"
-        and _is_redirect_status(status)
-        and (final_url is None or url != final_url)
-    ):
-        return "redirect"
-    return kind
-
-
-def _is_text_resource(kind: str, headers: dict[str, str]) -> bool:
-    content_type = headers.get("content-type", "").lower()
-    return kind in TEXT_RESOURCE_TYPES or any(marker in content_type for marker in TEXT_CONTENT_MARKERS)
-
-
-def _resource_id(kind: str, counters: dict[str, int]) -> str:
-    index = counters.get(kind, 0)
-    counters[kind] = index + 1
-    return f"{kind}:{index}"
-
-
-async def _maybe_await(value: object) -> object:
-    if inspect.isawaitable(value):
-        return await value
-    return value
-
-
-async def _async_response_body(
-    response: object,
-    kind: str,
-    headers: dict[str, str],
-    diagnostics: Diagnostics | None = None,
-) -> tuple[str, str | None]:
-    if not _is_text_resource(kind, headers):
-        return "", None
-    try:
-        raw = await _maybe_await(_value(response, "body", b""))
-        if isinstance(raw, str):
-            raw_bytes = raw.encode("utf-8", errors="replace")
-        else:
-            raw_bytes = bytes(raw or b"")
-        if len(raw_bytes) > MAX_RESOURCE_BODY_BYTES:
-            raw_bytes = raw_bytes[:MAX_RESOURCE_BODY_BYTES]
-        return raw_bytes.decode("utf-8", errors="replace"), None
-    except Exception as exc:
-        if diagnostics:
-            diagnostics.exception(2, f"browser resource body failed: {str(_value(response, 'url', ''))}", exc)
-        return "", short_exception(exc)
-
-
-async def _async_resource_from_browser_response(
-    resource_id: str,
-    response: object,
-    parent_id: str | None,
-    diagnostics: Diagnostics | None = None,
-) -> ResourceObservation | None:
-    url = str(_value(response, "url", ""))
-    if not _is_http_url(url):
-        return None
-    kind = _browser_resource_kind(response)
-    headers = _headers(response)
-    body, error = await _async_response_body(response, kind, headers, diagnostics)
-    status = _value(response, "status", None)
-    final_url = url
-    if kind == "redirect":
-        final_url = redirect_target(url, headers.get("location")) or url
-    return ResourceObservation(
-        id=resource_id,
-        parent_id=parent_id,
-        kind=kind,
-        url=url,
-        final_url=final_url,
-        status=int(status) if status is not None else None,
-        headers=headers,
-        cookies={},
-        body=body,
-        error=error,
-    )
 
 
 def _browser_launch_args(
@@ -313,10 +191,8 @@ class AsyncBrowserPool:
                 error=str(error),
             )
 
-        blocked_redirect: dict[str, str] = {}
         context = None
         close_context = False
-        page = None
         try:
             if self.diagnostics:
                 self.diagnostics.log(3, f"async browser fetch start: {url} timeout={timeout}")
@@ -324,103 +200,14 @@ class AsyncBrowserPool:
             if context is None:
                 raise RuntimeError("browser context is not available")
             if self.enable_extension and hasattr(context, "clear_cookies"):
-                await _maybe_await(context.clear_cookies())
-            page = await context.new_page()
-            observed_responses: list[object] = []
-
-            def record_response(response: object) -> None:
-                observed_responses.append(response)
-
-            async def limit_main_frame_redirects(route: object, request: object) -> None:
-                request_url = request.url
-                is_navigation = await _maybe_await(request.is_navigation_request())
-                if (
-                    is_navigation
-                    and request.frame == page.main_frame
-                    and not same_hostname(url, request_url)
-                ):
-                    blocked_redirect["url"] = request_url
-                    if self.diagnostics:
-                        self.diagnostics.log(
-                            1,
-                            f"browser redirect blocked: {url} -> {request_url} "
-                            f"(cross-host)",
-                        )
-                    await route.abort("blockedbyclient")
-                    return
-                await route.continue_()
-
-            await page.route("**/*", limit_main_frame_redirects)
-            page.on("response", record_response)
-            response = await page.goto(url, wait_until="networkidle", timeout=timeout * 1000)
-            body = await page.content()
-            globals_result = await page.evaluate(
-                """() => Object.keys(window).filter((k) =>
-                    /React|Vue|Angular|__NEXT|__NUXT|Svelte|jQuery|webpack/i.test(k)
-                )"""
-            )
-            script_srcs = await page.evaluate(
-                """() => Array.from(document.scripts)
-                    .map((script) => script.src)
-                    .filter(Boolean)"""
-            )
-            cookies = {
-                cookie["name"]: cookie.get("value", "")
-                for cookie in await context.cookies()
-            }
-            headers: Mapping[str, str] = response.headers if response else {}
-            status = response.status if response else None
-            final_url = page.url
-            document = ResourceObservation(
-                id="document:0",
-                kind="document",
-                url=url,
-                final_url=final_url,
-                status=status,
-                headers={k.lower(): v for k, v in headers.items()},
-                cookies=cookies,
-                body=body or "",
-            )
-            resources_list = [document]
-            counters: dict[str, int] = {"document": 1}
-            for observed in observed_responses:
-                observed_url = str(_value(observed, "url", ""))
-                observed_kind = _browser_resource_kind(observed, final_url)
-                if observed_kind == "document" and observed_url == final_url:
-                    continue
-                resource = await _async_resource_from_browser_response(
-                    _resource_id(observed_kind, counters),
-                    observed,
-                    document.id,
-                    self.diagnostics,
-                )
-                if resource is not None:
-                    resources_list.append(resource)
-                    if self.diagnostics:
-                        self.diagnostics.log(
-                            3,
-                            f"browser resource observed: kind={resource.kind} "
-                            f"status={resource.status} url={resource.url}",
-                        )
-            if self.diagnostics:
-                self.diagnostics.log(
-                    3,
-                    f"async browser fetch end: {url} status={document.status} "
-                    f"final_url={document.final_url} resources={len(resources_list)}",
-                )
-            return FetchResult(
-                input=target_input,
-                url=document.url,
-                final_url=document.final_url,
-                status=document.status,
-                headers=document.headers,
-                cookies=document.cookies,
-                body=document.body,
-                mode="browser",
-                browser_globals=list(globals_result or []),
-                script_srcs=list(script_srcs or []),
-                resources=resources_list,
-                primary_resource_id=document.id,
+                await maybe_await(context.clear_cookies())
+            return await capture_browser_page(
+                context,
+                target_input,
+                url,
+                timeout,
+                self.diagnostics,
+                self.include_traceback,
             )
         except Exception as exc:
             if self.diagnostics:
@@ -428,13 +215,6 @@ class AsyncBrowserPool:
             error_text = (
                 exception_with_traceback(exc) if self.include_traceback else short_exception(exc)
             )
-            if blocked_redirect.get("url"):
-                message = f"blocked cross-host redirect to {blocked_redirect['url']}"
-                error_text = (
-                    exception_with_traceback(exc, message)
-                    if self.include_traceback
-                    else message
-                )
             return FetchResult(
                 input=target_input,
                 url=url,
@@ -447,11 +227,9 @@ class AsyncBrowserPool:
                 error=error_text,
             )
         finally:
-            if page is not None and hasattr(page, "close"):
-                await _maybe_await(page.close())
             if context is not None:
                 if close_context:
-                    await _maybe_await(context.close())
+                    await maybe_await(context.close())
                 elif self._context_queue is not None:
                     await self._context_queue.put(context)
 
@@ -463,15 +241,15 @@ class AsyncBrowserPool:
                 break
         for context in self._contexts:
             try:
-                await _maybe_await(context.close())
+                await maybe_await(context.close())
             except Exception:
                 pass
         self._contexts = []
         if self._browser is not None:
-            await _maybe_await(self._browser.close())
+            await maybe_await(self._browser.close())
             self._browser = None
         if self._playwright is not None:
-            await _maybe_await(self._playwright.stop())
+            await maybe_await(self._playwright.stop())
             self._playwright = None
         self._resources.close()
         for profile_dir in self._profile_dirs:
