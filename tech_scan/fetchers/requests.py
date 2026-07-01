@@ -14,6 +14,13 @@ from tech_scan.url_policy import redirect_target, same_hostname
 
 from .adblock import is_blocked_script_url
 from .headers import REQUESTS_HEADERS
+from .resources import (
+    is_redirect_status,
+    limited_text_from_bytes_or_text,
+    make_error_resource,
+    make_redirect_resource,
+    make_resource,
+)
 
 MAX_SCRIPT_RESOURCES = 25
 MAX_SCRIPT_BODY_BYTES = 1024 * 1024
@@ -29,31 +36,13 @@ def _cookie_dict(cookies: requests.cookies.RequestsCookieJar) -> dict[str, str]:
     return {cookie.name: cookie.value for cookie in cookies}
 
 
-def is_redirect_status(status_code: int) -> bool:
-    return status_code in {301, 302, 303, 307, 308}
-
-
-def _limited_text(response: requests.Response, max_bytes: int | None = None) -> str:
+def _response_text(response: requests.Response, max_bytes: int | None = None) -> str:
     content = response.content if hasattr(response, "content") else None
-    if content is None:
-        text = response.text or ""
-        content = text.encode(response.encoding or "utf-8", errors="replace")
-    if max_bytes is not None and len(content) > max_bytes:
-        content = content[:max_bytes]
-    encoding = response.encoding or "utf-8"
-    return content.decode(encoding, errors="replace")
-
-
-def _redirect_resource(resource_id: str, url: str, next_url: str, response: requests.Response) -> ResourceObservation:
-    return ResourceObservation(
-        id=resource_id,
-        kind="redirect",
-        url=url,
-        final_url=next_url,
-        status=response.status_code,
-        headers={k.lower(): v for k, v in response.headers.items()},
-        cookies=_cookie_dict(response.cookies),
-        body="",
+    return limited_text_from_bytes_or_text(
+        content=content,
+        text=response.text or "",
+        encoding=response.encoding or "utf-8",
+        max_bytes=max_bytes,
     )
 
 
@@ -98,14 +87,16 @@ def _get_with_same_host_redirects(
                     1,
                     f"requests redirect stopped: {current_url} -> {next_url} "
                     f"(cross-host)",
-            )
+                )
             break
         redirects.append(
-            _redirect_resource(
-                f"redirect:{len(redirects)}",
-                current_url,
-                next_url,
-                response,
+            make_redirect_resource(
+                resource_id=f"redirect:{len(redirects)}",
+                url=current_url,
+                next_url=next_url,
+                status=response.status_code,
+                headers=response.headers,
+                cookies=_cookie_dict(response.cookies),
             )
         )
         if diagnostics:
@@ -124,37 +115,16 @@ def _resource_from_response(
     parent_id: str | None = None,
     max_body_bytes: int | None = None,
 ) -> ResourceObservation:
-    return ResourceObservation(
-        id=resource_id,
+    return make_resource(
+        resource_id=resource_id,
         parent_id=parent_id,
         kind=kind,
         url=url,
         final_url=response.url,
         status=response.status_code,
-        headers={k.lower(): v for k, v in response.headers.items()},
+        headers=response.headers,
         cookies=_cookie_dict(response.cookies),
-        body=_limited_text(response, max_body_bytes),
-    )
-
-
-def _error_resource(
-    resource_id: str,
-    kind: str,
-    url: str,
-    error: str,
-    parent_id: str | None = None,
-) -> ResourceObservation:
-    return ResourceObservation(
-        id=resource_id,
-        parent_id=parent_id,
-        kind=kind,
-        url=url,
-        final_url=None,
-        status=None,
-        headers={},
-        cookies={},
-        body="",
-        error=error,
+        body=_response_text(response, max_body_bytes),
     )
 
 
@@ -231,11 +201,11 @@ def fetch_requests(
                 if diagnostics:
                     diagnostics.exception(2, f"requests script fetch failed: {script_url}", exc)
                 resources.append(
-                    _error_resource(
-                        resource_id,
-                        "script",
-                        script_url,
-                        short_exception(exc),
+                    make_error_resource(
+                        resource_id=resource_id,
+                        kind="script",
+                        url=script_url,
+                        error=short_exception(exc),
                         parent_id=document.id,
                     )
                 )
@@ -257,7 +227,7 @@ def fetch_requests(
             diagnostics.exception(2, f"requests fetch failed: {url}", exc)
         error = exception_with_traceback(exc) if include_traceback else short_exception(exc)
 
-    error_resource = _error_resource("document:0", "document", url, error or "request failed")
+    error_resource = make_error_resource("document:0", "document", url, error or "request failed")
     return FetchResult(
         input=target_input,
         url=url,
