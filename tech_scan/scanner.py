@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Awaitable, Callable
 
@@ -24,6 +25,13 @@ from .sanity import check_target_ports
 
 
 BlockingRunner = Callable[..., Awaitable[Any]]
+
+
+@dataclass
+class CacheOutcome:
+    lookup: str = "not_applicable"
+    stored: bool | None = None
+    reason: str | None = None
 
 
 async def run_blocking_in_thread(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
@@ -67,6 +75,9 @@ class ScanRunner:
                     "mode": self.args.mode,
                     "providers": self.provider_names,
                     "cached": False,
+                    "cache_lookup": "not_applicable",
+                    "cache_stored": None,
+                    "cache_reason": None,
                     "cache_created_at": None,
                     "cache_updated_at": None,
                     "observations": [],
@@ -84,9 +95,14 @@ class ScanRunner:
         findings = []
         fetch: FetchResult | None = None
         auto_observations: list[dict[str, str]] = []
+        cache_outcomes: dict[str, CacheOutcome] = {}
 
         with ResponseCache(self.args.db) as cache:
             async def cached_or_fetch(mode: str) -> FetchResult:
+                cache_outcome = CacheOutcome(
+                    lookup="refresh" if self.args.refresh else "miss"
+                )
+                cache_outcomes[mode] = cache_outcome
                 identity = fetch_identity(self.args, mode)
                 if not self.args.refresh:
                     cached_fetch = cache.get(
@@ -97,6 +113,7 @@ class ScanRunner:
                         identity,
                     )
                     if cached_fetch:
+                        cache_outcome.lookup = "hit"
                         primary = cached_fetch.primary_resource
                         self.diagnostics.log(
                             3,
@@ -147,13 +164,16 @@ class ScanRunner:
                         primary_resource_id=sanity_resource.id,
                     )
                     disposition = cache_disposition(sanity_fetch)
+                    cache_outcome.reason = disposition.reason
                     if disposition.cacheable:
                         cache.set(target, mode, self.args.proxy, sanity_fetch, identity)
+                        cache_outcome.stored = True
                         self.diagnostics.log(
                             3,
                             f"cache write: target={target} mode={mode} reason={disposition.reason}",
                         )
                     else:
+                        cache_outcome.stored = False
                         self.diagnostics.log(
                             3,
                             f"cache drop: target={target} mode={mode} reason={disposition.reason}",
@@ -194,13 +214,16 @@ class ScanRunner:
                     f"error={bool(fresh_fetch.error)} elapsed={elapsed:.3f}s",
                 )
                 disposition = cache_disposition(fresh_fetch)
+                cache_outcome.reason = disposition.reason
                 if disposition.cacheable:
                     cache.set(target, mode, self.args.proxy, fresh_fetch, identity)
+                    cache_outcome.stored = True
                     self.diagnostics.log(
                         3,
                         f"cache write: target={target} mode={mode} reason={disposition.reason}",
                     )
                 else:
+                    cache_outcome.stored = False
                     self.diagnostics.log(
                         3,
                         f"cache drop: target={target} mode={mode} reason={disposition.reason}",
@@ -251,6 +274,7 @@ class ScanRunner:
         primary = fetch.primary_resource
         observations = collect_header_observations(fetch, merged)
         observations.extend(auto_observations)
+        cache_outcome = cache_outcomes.get(fetch.mode, CacheOutcome())
         return {
             "input": raw_target,
             "url": fetch.url,
@@ -259,6 +283,9 @@ class ScanRunner:
             "mode": fetch.mode,
             "providers": self.provider_names,
             "cached": fetch.cached,
+            "cache_lookup": cache_outcome.lookup,
+            "cache_stored": cache_outcome.stored,
+            "cache_reason": cache_outcome.reason,
             "cache_created_at": primary.cache_created_at,
             "cache_updated_at": primary.cache_updated_at,
             "observations": observations,

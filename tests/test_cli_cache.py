@@ -183,7 +183,13 @@ class CliCacheTests(unittest.TestCase):
                 )
 
             self.assertFalse(first["cached"])
+            self.assertEqual(first["cache_lookup"], "miss")
+            self.assertTrue(first["cache_stored"])
+            self.assertEqual(first["cache_reason"], "http-status-200")
             self.assertTrue(second["cached"])
+            self.assertEqual(second["cache_lookup"], "hit")
+            self.assertIsNone(second["cache_stored"])
+            self.assertIsNone(second["cache_reason"])
             self.assertEqual(fetch_mock.call_count, 1)
             self.assertEqual(second["providers"], ["builtin", "wappalyzergo"])
 
@@ -211,6 +217,9 @@ class CliCacheTests(unittest.TestCase):
                 )
 
             self.assertFalse(refreshed["cached"])
+            self.assertEqual(refreshed["cache_lookup"], "refresh")
+            self.assertTrue(refreshed["cache_stored"])
+            self.assertEqual(refreshed["cache_reason"], "http-status-200")
             self.assertEqual(fetch_mock.call_count, 2)
 
     def test_auto_mode_small_static_response_does_not_call_browser(self):
@@ -251,7 +260,7 @@ class CliCacheTests(unittest.TestCase):
                 cookies={},
                 body="",
                 mode="browser",
-                error="old browser missing",
+                error="browser executable missing",
             )
             second_fetch = FetchResult(
                 input="example.com",
@@ -272,6 +281,9 @@ class CliCacheTests(unittest.TestCase):
                     second = scan_target("example.com", args, ["builtin"], ["builtin"])
 
             self.assertFalse(first["cached"])
+            self.assertEqual(first["cache_lookup"], "miss")
+            self.assertFalse(first["cache_stored"])
+            self.assertEqual(first["cache_reason"], "local-client-error")
             self.assertFalse(second["cached"])
             self.assertEqual(fetch_mock.call_count, 2)
             self.assertEqual(second["status"], 200)
@@ -307,9 +319,79 @@ class CliCacheTests(unittest.TestCase):
                 second = scan_target("example.com", args, ["builtin"], ["builtin"])
 
             self.assertFalse(first["cached"])
+            self.assertEqual(first["cache_lookup"], "miss")
+            self.assertFalse(first["cache_stored"])
+            self.assertEqual(first["cache_reason"], "local-client-error")
             self.assertFalse(second["cached"])
             self.assertEqual(fetch_mock.call_count, 2)
             self.assertEqual(second["status"], 200)
+
+    def test_redirect_status_response_is_cached_and_reported(self):
+        with TemporaryDirectory() as tmpdir:
+            db = Path(tmpdir) / "results.db"
+            redirect_fetch = FetchResult(
+                input="https://example.com",
+                url="https://example.com",
+                final_url="https://example.com/login",
+                status=301,
+                headers={"location": "/login"},
+                cookies={},
+                body="",
+                mode="requests",
+            )
+
+            with patch("tech_scan.scanner.fetch_requests", return_value=redirect_fetch) as fetch_mock:
+                first = scan_input(
+                    "https://example.com",
+                    args_for(db),
+                    ["builtin"],
+                    ["builtin"],
+                )[0]
+                second = scan_input(
+                    "https://example.com",
+                    args_for(db),
+                    ["builtin"],
+                    ["builtin"],
+                )[0]
+
+        self.assertFalse(first["cached"])
+        self.assertEqual(first["status"], 301)
+        self.assertEqual(first["cache_lookup"], "miss")
+        self.assertTrue(first["cache_stored"])
+        self.assertEqual(first["cache_reason"], "http-status-301")
+        self.assertTrue(second["cached"])
+        self.assertEqual(second["status"], 301)
+        self.assertEqual(second["cache_lookup"], "hit")
+        self.assertIsNone(second["cache_stored"])
+        self.assertEqual(fetch_mock.call_count, 1)
+
+    def test_cross_host_redirect_block_is_cached_and_reported(self):
+        with TemporaryDirectory() as tmpdir:
+            db = Path(tmpdir) / "results.db"
+            blocked_fetch = FetchResult(
+                input="example.com",
+                url="https://example.com",
+                final_url=None,
+                status=None,
+                headers={},
+                cookies={},
+                body="",
+                mode="browser",
+                error="blocked cross-host redirect to https://idp.example.net/sso",
+            )
+            args = args_for(db, mode="browser")
+
+            with patch("tech_scan.scanner.fetch_browser_async", return_value=blocked_fetch) as fetch_mock:
+                first = scan_target("example.com", args, ["builtin"], ["builtin"])
+                second = scan_target("example.com", args, ["builtin"], ["builtin"])
+
+        self.assertFalse(first["cached"])
+        self.assertEqual(first["cache_lookup"], "miss")
+        self.assertTrue(first["cache_stored"])
+        self.assertEqual(first["cache_reason"], "blocked-cross-host-redirect")
+        self.assertTrue(second["cached"])
+        self.assertEqual(second["cache_lookup"], "hit")
+        self.assertEqual(fetch_mock.call_count, 1)
 
     def test_auto_mode_logs_browser_fallback_reason_at_verbosity_one(self):
         with TemporaryDirectory() as tmpdir:
