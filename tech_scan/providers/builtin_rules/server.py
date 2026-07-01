@@ -1,0 +1,50 @@
+from __future__ import annotations
+
+from tech_scan.models import DIM_CDN_WAF_SERVER
+
+from .common import Rule, cookie_name_detector, header_detector
+
+
+RULES = [
+    Rule("Cloudflare", DIM_CDN_WAF_SERVER, 95, header_detector("server", r"cloudflare")),
+    Rule("Cloudflare", DIM_CDN_WAF_SERVER, 90, header_detector("cf-ray", r".+")),
+    Rule("Akamai", DIM_CDN_WAF_SERVER, 90, header_detector("server", r"akamai|ghost")),
+    Rule("Akamai", DIM_CDN_WAF_SERVER, 80, header_detector("x-akamai", r".+")),
+    Rule("Fastly", DIM_CDN_WAF_SERVER, 90, header_detector("server", r"fastly")),
+    Rule("Vercel", DIM_CDN_WAF_SERVER, 90, header_detector("server", r"^(now|vercel)$")),
+    Rule("Vercel", DIM_CDN_WAF_SERVER, 90, header_detector("x-vercel-id", r".+")),
+    Rule("Vercel", DIM_CDN_WAF_SERVER, 85, header_detector("x-vercel-cache", r".+")),
+    Rule("Vercel", DIM_CDN_WAF_SERVER, 85, header_detector("x-now-trace", r".+")),
+    Rule("Netlify", DIM_CDN_WAF_SERVER, 90, header_detector("server", r"^netlify")),
+    Rule("Netlify", DIM_CDN_WAF_SERVER, 90, header_detector("x-nf-request-id", r".+")),
+    Rule("Heroku", DIM_CDN_WAF_SERVER, 85, header_detector("via", r"[\d.-]+ vegur$")),
+    Rule("AWS CloudFront", DIM_CDN_WAF_SERVER, 90, header_detector("server", r"cloudfront")),
+    Rule("AWS CloudFront", DIM_CDN_WAF_SERVER, 90, header_detector("x-amz-cf-id", r".+")),
+    Rule("Amazon S3", DIM_CDN_WAF_SERVER, 90, header_detector("server", r"^amazons3$")),
+    Rule("Amazon S3", DIM_CDN_WAF_SERVER, 90, header_detector("x-amz-request-id", r".+")),
+    Rule("Amazon S3", DIM_CDN_WAF_SERVER, 85, header_detector("x-amz-id-2", r".+")),
+    Rule("Varnish", DIM_CDN_WAF_SERVER, 85, header_detector("via", r"varnish")),
+    Rule("nginx", DIM_CDN_WAF_SERVER, 90, header_detector("server", r"nginx")),
+    Rule("OpenResty", DIM_CDN_WAF_SERVER, 90, header_detector("server", r"openresty")),
+    Rule("Tengine", DIM_CDN_WAF_SERVER, 90, header_detector("server", r"tengine")),
+    Rule("Apache", DIM_CDN_WAF_SERVER, 90, header_detector("server", r"apache")),
+    Rule("Microsoft IIS", DIM_CDN_WAF_SERVER, 95, header_detector("server", r"microsoft-iis|iis")),
+    Rule("LiteSpeed", DIM_CDN_WAF_SERVER, 90, header_detector("server", r"litespeed")),
+    Rule("LiteSpeed Cache", DIM_CDN_WAF_SERVER, 90, header_detector("x-litespeed-cache", r".+")),
+    Rule("LiteSpeed Cache", DIM_CDN_WAF_SERVER, 85, header_detector("x-turbo-charged-by", r"litespeed")),
+    Rule("Caddy", DIM_CDN_WAF_SERVER, 90, header_detector("server", r"^caddy$")),
+    Rule("lighttpd", DIM_CDN_WAF_SERVER, 90, header_detector("server", r"lighttpd|lighty")),
+    Rule("Envoy", DIM_CDN_WAF_SERVER, 85, header_detector("server", r"envoy")),
+    Rule("HAProxy", DIM_CDN_WAF_SERVER, 80, header_detector("server", r"haproxy")),
+    Rule("gunicorn", DIM_CDN_WAF_SERVER, 90, header_detector("server", r"gunicorn")),
+    Rule("Werkzeug", DIM_CDN_WAF_SERVER, 90, header_detector("server", r"werkzeug")),
+    Rule("CherryPy", DIM_CDN_WAF_SERVER, 90, header_detector("server", r"cherrypy")),
+    Rule("WebLogic", DIM_CDN_WAF_SERVER, 90, header_detector("server", r"weblogic")),
+    Rule("OpenGSE", DIM_CDN_WAF_SERVER, 90, header_detector("server", r"^gse$")),
+    Rule("Imperva", DIM_CDN_WAF_SERVER, 90, header_detector("x-cdn", r"^imperva")),
+    Rule("Imperva", DIM_CDN_WAF_SERVER, 90, header_detector("x-iinfo", r".+")),
+    Rule("F5 BIG-IP", DIM_CDN_WAF_SERVER, 90, header_detector("server", r"^big-?ip$")),
+    Rule("F5 BIG-IP", DIM_CDN_WAF_SERVER, 90, cookie_name_detector(r"(?i)(lastmrh_session|mrhsession|bigipserver|f5_fullwt|f5_st)")),
+    Rule("Phusion Passenger", DIM_CDN_WAF_SERVER, 90, header_detector("server", r"phusion passenger")),
+    Rule("Phusion Passenger", DIM_CDN_WAF_SERVER, 90, header_detector("x-powered-by", r"phusion passenger(?:\(r\))?")),
+]
