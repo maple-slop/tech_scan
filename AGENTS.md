@@ -187,6 +187,8 @@ echo 'https://example.com' | make smoke-browser
 
 Add or update tests for every behavior change. Prefer fake Playwright/browser objects for unit tests instead of requiring real browser binaries in the test suite.
 
+`tests/live_website_references.json` is a weak live-smoke reference list, not a deterministic unit-test fixture. It records currently reachable public websites that are expected to expose selected frontend/backend framework signals, plus the last observed builtin scan result. Use it for manual coverage checks, rule discovery, and regression investigation. Do not make CI fail solely because one of these live sites changes, blocks scanners, redirects differently, or stops exposing a framework marker.
+
 Protect these behaviors with tests when touched:
 
 - JSONL output stability.

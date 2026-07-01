@@ -1,0 +1,529 @@
+[
+  {
+    "technology": "Next.js",
+    "dimension": "frontend_framework",
+    "references": [
+      {
+        "url": "https://openai.com",
+        "source_url": "https://nextjs.org/showcase",
+        "source_note": "Listed in the official Next.js showcase.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 200,
+          "mode": "browser",
+          "detected": [
+            "Cloudflare",
+            "Vercel",
+            "Next.js"
+          ]
+        }
+      },
+      {
+        "url": "https://www.nike.com",
+        "source_url": "https://nextjs.org/showcase",
+        "source_note": "Listed in the official Next.js showcase.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 200,
+          "mode": "requests",
+          "detected": [
+            "Next.js",
+            "React"
+          ]
+        }
+      },
+      {
+        "url": "https://jobs.netflix.com",
+        "source_url": "https://nextjs.org/showcase",
+        "source_note": "Listed in the official Next.js showcase.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 200,
+          "mode": "requests",
+          "detected": [
+            "Next.js",
+            "Preact",
+            "React"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "technology": "Astro",
+    "dimension": "frontend_framework",
+    "references": [
+      {
+        "url": "https://proton.me",
+        "source_url": "https://astro.build/showcase/",
+        "source_note": "Listed in the official Astro showcase.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 200,
+          "mode": "requests",
+          "detected": [
+            "Astro"
+          ]
+        }
+      },
+      {
+        "url": "https://www.ikea.com",
+        "source_url": "https://astro.build/showcase/",
+        "source_note": "Listed in the official Astro showcase.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 200,
+          "mode": "requests",
+          "detected": [
+            "Cloudflare",
+            "Astro"
+          ]
+        }
+      },
+      {
+        "url": "https://docs.netlify.com",
+        "source_url": "https://astro.build/showcase/",
+        "source_note": "Listed in the official Astro showcase.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 200,
+          "mode": "requests",
+          "detected": [
+            "Netlify",
+            "Astro"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "technology": "Nuxt",
+    "dimension": "frontend_framework",
+    "references": [
+      {
+        "url": "https://www.backmarket.com",
+        "source_url": "https://nuxt.com/showcase",
+        "source_note": "Listed in the official Nuxt showcase.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 200,
+          "mode": "browser",
+          "detected": [
+            "Cloudflare",
+            "Nuxt",
+            "Vue.js"
+          ]
+        }
+      },
+      {
+        "url": "https://www.paulsmith.com",
+        "source_url": "https://nuxt.com/showcase",
+        "source_note": "Listed in the official Nuxt showcase.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 200,
+          "mode": "browser",
+          "detected": [
+            "Vercel",
+            "Nuxt",
+            "Vue.js"
+          ]
+        }
+      },
+      {
+        "url": "https://www.gitlab.com",
+        "source_url": "https://nuxt.com/showcase",
+        "source_note": "Listed in the official Nuxt showcase.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 200,
+          "mode": "browser",
+          "detected": [
+            "Cloudflare",
+            "Nuxt",
+            "Vue.js"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "technology": "Qwik",
+    "dimension": "frontend_framework",
+    "references": [
+      {
+        "url": "https://qwik.dev",
+        "source_url": "https://qwik.dev/showcase/",
+        "source_note": "Official Qwik site and listed in the official Qwik showcase.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 200,
+          "mode": "requests",
+          "detected": [
+            "Cloudflare",
+            "Qwik"
+          ]
+        }
+      },
+      {
+        "url": "https://valibot.dev",
+        "source_url": "https://qwik.dev/showcase/",
+        "source_note": "Listed in the official Qwik showcase.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 200,
+          "mode": "requests",
+          "detected": [
+            "Cloudflare",
+            "Qwik"
+          ]
+        }
+      },
+      {
+        "url": "https://reflect.app",
+        "source_url": "https://qwik.dev/showcase/",
+        "source_note": "Listed in the official Qwik showcase.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 200,
+          "mode": "requests",
+          "detected": [
+            "Java EE/Jakarta EE",
+            "Vercel",
+            "Qwik"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "technology": "Vue.js",
+    "dimension": "frontend_framework",
+    "references": [
+      {
+        "url": "https://www.backmarket.com",
+        "source_url": "https://nuxt.com/showcase",
+        "source_note": "Nuxt site; Vue.js is expected as an implied frontend runtime/framework signal.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 200,
+          "mode": "browser",
+          "detected": [
+            "Cloudflare",
+            "Nuxt",
+            "Vue.js"
+          ]
+        }
+      },
+      {
+        "url": "https://www.paulsmith.com",
+        "source_url": "https://nuxt.com/showcase",
+        "source_note": "Nuxt site; Vue.js is expected as an implied frontend runtime/framework signal.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 200,
+          "mode": "browser",
+          "detected": [
+            "Vercel",
+            "Nuxt",
+            "Vue.js"
+          ]
+        }
+      },
+      {
+        "url": "https://www.gitlab.com",
+        "source_url": "https://nuxt.com/showcase",
+        "source_note": "Nuxt site; Vue.js is expected as an implied frontend runtime/framework signal.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 200,
+          "mode": "browser",
+          "detected": [
+            "Cloudflare",
+            "Nuxt",
+            "Vue.js"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "technology": "React",
+    "dimension": "frontend_framework",
+    "references": [
+      {
+        "url": "https://www.nike.com",
+        "source_url": "https://nextjs.org/showcase",
+        "source_note": "Next.js showcase site; React is expected as an implied frontend runtime/framework signal.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 200,
+          "mode": "requests",
+          "detected": [
+            "Next.js",
+            "React"
+          ]
+        }
+      },
+      {
+        "url": "https://www.hashicorp.com",
+        "source_url": "https://preactjs.com/about/we-are-using/",
+        "source_note": "Listed by Preact; current live page also exposes React/Next.js markers.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 200,
+          "mode": "requests",
+          "detected": [
+            "Vercel",
+            "Alpine.js",
+            "Next.js",
+            "React"
+          ]
+        }
+      },
+      {
+        "url": "https://www.shipfinex.com",
+        "source_url": "https://builtwithdjango.com/",
+        "source_note": "Built with Django listing; current live page exposes React frontend markers.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 200,
+          "mode": "browser",
+          "detected": [
+            "Cloudflare",
+            "React"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "technology": "Django",
+    "dimension": "backend_framework",
+    "references": [
+      {
+        "url": "https://djass.dev",
+        "source_url": "https://builtwithdjango.com/",
+        "source_note": "Listed in Built with Django.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 200,
+          "mode": "requests",
+          "detected": [
+            "Django",
+            "Python",
+            "Cloudflare",
+            "htmx",
+            "Stimulus"
+          ]
+        }
+      },
+      {
+        "url": "https://chattersift.com",
+        "source_url": "https://builtwithdjango.com/",
+        "source_note": "Listed in Built with Django, but current homepage did not expose Django-specific builtin evidence.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 200,
+          "mode": "requests",
+          "detected": [
+            "Cloudflare",
+            "htmx"
+          ]
+        }
+      },
+      {
+        "url": "https://www.shipfinex.com",
+        "source_url": "https://builtwithdjango.com/",
+        "source_note": "Listed in Built with Django, but current homepage did not expose Django-specific builtin evidence.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 200,
+          "mode": "browser",
+          "detected": [
+            "Cloudflare",
+            "React"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "technology": "Laravel",
+    "dimension": "backend_framework",
+    "references": [
+      {
+        "url": "https://spatie.be",
+        "source_url": "https://builtwithlaravel.com/",
+        "source_note": "Listed in Built with Laravel and exposes Laravel/Livewire builtin evidence.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 200,
+          "mode": "requests",
+          "detected": [
+            "Laravel",
+            "Livewire",
+            "PHP",
+            "nginx",
+            "Alpine.js",
+            "React"
+          ]
+        }
+      },
+      {
+        "url": "https://www.geocod.io",
+        "source_url": "https://builtwithlaravel.com/",
+        "source_note": "Listed in Built with Laravel, but current homepage did not expose Laravel-specific builtin evidence.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 200,
+          "mode": "requests",
+          "detected": [
+            "Cloudflare",
+            "Alpine.js"
+          ]
+        }
+      },
+      {
+        "url": "https://transistor.fm",
+        "source_url": "https://builtwithlaravel.com/",
+        "source_note": "Listed in Built with Laravel, but current homepage did not expose Laravel-specific builtin evidence.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 200,
+          "mode": "requests",
+          "detected": [
+            "Netlify",
+            "Alpine.js"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "technology": "Stimulus",
+    "dimension": "frontend_framework",
+    "references": [
+      {
+        "url": "https://basecamp.com",
+        "source_url": "https://hotwired.dev/",
+        "source_note": "Hotwire/37signals-adjacent reference; current live page exposes Stimulus builtin evidence.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 200,
+          "mode": "requests",
+          "detected": [
+            "Cloudflare",
+            "Stimulus"
+          ]
+        }
+      },
+      {
+        "url": "https://djass.dev",
+        "source_url": "https://builtwithdjango.com/",
+        "source_note": "Current live page exposes Stimulus builtin evidence.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 200,
+          "mode": "requests",
+          "detected": [
+            "Django",
+            "Python",
+            "Cloudflare",
+            "htmx",
+            "Stimulus"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "technology": "htmx",
+    "dimension": "frontend_framework",
+    "references": [
+      {
+        "url": "https://djass.dev",
+        "source_url": "https://builtwithdjango.com/",
+        "source_note": "Current live page exposes htmx builtin evidence.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 200,
+          "mode": "requests",
+          "detected": [
+            "Django",
+            "Python",
+            "Cloudflare",
+            "htmx",
+            "Stimulus"
+          ]
+        }
+      },
+      {
+        "url": "https://chattersift.com",
+        "source_url": "https://builtwithdjango.com/",
+        "source_note": "Current live page exposes htmx builtin evidence.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 200,
+          "mode": "requests",
+          "detected": [
+            "Cloudflare",
+            "htmx"
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "technology": "Alpine.js",
+    "dimension": "frontend_framework",
+    "references": [
+      {
+        "url": "https://www.geocod.io",
+        "source_url": "https://builtwithlaravel.com/",
+        "source_note": "Current live page exposes Alpine.js builtin evidence.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 200,
+          "mode": "requests",
+          "detected": [
+            "Cloudflare",
+            "Alpine.js"
+          ]
+        }
+      },
+      {
+        "url": "https://transistor.fm",
+        "source_url": "https://builtwithlaravel.com/",
+        "source_note": "Current live page exposes Alpine.js builtin evidence.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 200,
+          "mode": "requests",
+          "detected": [
+            "Netlify",
+            "Alpine.js"
+          ]
+        }
+      },
+      {
+        "url": "https://spatie.be",
+        "source_url": "https://builtwithlaravel.com/",
+        "source_note": "Current live page exposes Alpine.js builtin evidence.",
+        "last_builtin_scan": {
+          "date": "2026-07-01",
+          "status": 200,
+          "mode": "requests",
+          "detected": [
+            "Laravel",
+            "Livewire",
+            "PHP",
+            "nginx",
+            "Alpine.js",
+            "React"
+          ]
+        }
+      }
+    ]
+  }
+]
