@@ -6,17 +6,25 @@ import sqlite3
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
-from .models import FetchResult, ResourceObservation
+from .models import FetchObservation, ResourceObservation
 
 
-FETCH_PROFILE_VERSION = "v7"
+FETCH_PROFILE_VERSION = "v8"
 
 
 @dataclass(frozen=True)
 class CacheDisposition:
     cacheable: bool
     reason: str
+
+
+@dataclass(frozen=True)
+class CacheRecord:
+    observation: FetchObservation
+    created_at: int
+    updated_at: int
 
 
 LOCAL_CLIENT_ERROR_MARKERS = [
@@ -33,7 +41,7 @@ LOCAL_CLIENT_ERROR_MARKERS = [
 ]
 
 
-def cache_disposition(fetch: FetchResult) -> CacheDisposition:
+def cache_disposition(fetch: FetchObservation) -> CacheDisposition:
     primary = fetch.primary_resource
     if primary.status is not None:
         return CacheDisposition(True, f"http-status-{primary.status}")
@@ -60,7 +68,7 @@ def cache_disposition(fetch: FetchResult) -> CacheDisposition:
     return CacheDisposition(False, "fetch-error")
 
 
-def is_cacheable_fetch(fetch: FetchResult) -> bool:
+def is_cacheable_fetch(fetch: FetchObservation) -> bool:
     return cache_disposition(fetch).cacheable
 
 
@@ -70,7 +78,103 @@ def default_db_path() -> Path:
     return base / "tech_scan" / "results.db"
 
 
-class ResponseCache:
+def _resource_to_json(resource: ResourceObservation) -> dict[str, Any]:
+    return {
+        "id": resource.id,
+        "kind": resource.kind,
+        "url": resource.url,
+        "final_url": resource.final_url,
+        "status": resource.status,
+        "headers": resource.headers,
+        "cookies": resource.cookies,
+        "body": resource.body,
+        "parent_id": resource.parent_id,
+        "error": resource.error,
+    }
+
+
+def _resource_from_json(data: dict[str, Any], created_at: int, updated_at: int) -> ResourceObservation:
+    return ResourceObservation(
+        id=str(data["id"]),
+        kind=str(data["kind"]),
+        url=str(data["url"]),
+        final_url=data.get("final_url"),
+        status=data.get("status"),
+        headers={str(key): str(value) for key, value in (data.get("headers") or {}).items()},
+        cookies={str(key): str(value) for key, value in (data.get("cookies") or {}).items()},
+        body=str(data.get("body") or ""),
+        parent_id=data.get("parent_id"),
+        error=data.get("error"),
+        cache_created_at=created_at,
+        cache_updated_at=updated_at,
+    )
+
+
+def _observation_to_json(fetch: FetchObservation) -> dict[str, Any]:
+    return {
+        "input": fetch.input,
+        "url": fetch.url,
+        "final_url": fetch.final_url,
+        "status": fetch.status,
+        "headers": fetch.headers,
+        "cookies": fetch.cookies,
+        "body": fetch.body,
+        "mode": fetch.mode,
+        "error": fetch.error,
+        "browser_globals": fetch.browser_globals,
+        "script_srcs": fetch.script_srcs,
+        "resources": [_resource_to_json(resource) for resource in fetch.resources],
+        "primary_resource_id": fetch.primary_resource_id,
+    }
+
+
+def _observation_from_json(data: dict[str, Any], target: str, created_at: int, updated_at: int) -> FetchObservation:
+    resources = [
+        _resource_from_json(resource, created_at, updated_at)
+        for resource in data.get("resources") or []
+    ]
+    primary_resource_id = data.get("primary_resource_id")
+    primary = next(
+        (resource for resource in resources if resource.id == primary_resource_id),
+        resources[0] if resources else None,
+    )
+    if primary is None:
+        primary = ResourceObservation(
+            id="document:0",
+            kind="document",
+            url=target,
+            final_url=data.get("final_url"),
+            status=data.get("status"),
+            headers={str(key): str(value) for key, value in (data.get("headers") or {}).items()},
+            cookies={str(key): str(value) for key, value in (data.get("cookies") or {}).items()},
+            body=str(data.get("body") or ""),
+            error=data.get("error"),
+            cache_created_at=created_at,
+            cache_updated_at=updated_at,
+        )
+        resources = [primary]
+        primary_resource_id = primary.id
+    script_srcs = data.get("script_srcs") or [
+        resource.url for resource in resources if resource.kind == "script"
+    ]
+    return FetchObservation(
+        input=target,
+        url=target,
+        final_url=primary.final_url,
+        status=primary.status,
+        headers=primary.headers,
+        cookies=primary.cookies,
+        body=primary.body,
+        mode=str(data.get("mode") or ""),
+        error=primary.error,
+        browser_globals=[str(item) for item in data.get("browser_globals") or []],
+        script_srcs=[str(item) for item in script_srcs],
+        resources=resources,
+        primary_resource_id=str(primary_resource_id) if primary_resource_id else None,
+    )
+
+
+class CacheStore:
     def __init__(self, path: Path):
         self.path = path
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -78,48 +182,16 @@ class ResponseCache:
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.execute(
             """
-            CREATE TABLE IF NOT EXISTS fetches (
+            CREATE TABLE IF NOT EXISTS fetch_records (
                 cache_key TEXT PRIMARY KEY,
                 target TEXT NOT NULL,
-                mode TEXT NOT NULL,
+                source TEXT NOT NULL,
                 proxy TEXT,
+                identity TEXT NOT NULL,
                 profile_version TEXT NOT NULL,
-                primary_resource_id TEXT NOT NULL,
-                browser_globals_json TEXT NOT NULL,
+                observation_json TEXT NOT NULL,
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL
-            )
-            """
-        )
-        self.conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS resources (
-                cache_key TEXT NOT NULL,
-                resource_id TEXT NOT NULL,
-                parent_id TEXT,
-                kind TEXT NOT NULL,
-                url TEXT NOT NULL,
-                final_url TEXT,
-                status INTEGER,
-                headers_json TEXT NOT NULL,
-                cookies_json TEXT NOT NULL,
-                body TEXT NOT NULL,
-                error TEXT,
-                created_at INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL,
-                PRIMARY KEY (cache_key, resource_id)
-            )
-            """
-        )
-        self.conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS resource_links (
-                cache_key TEXT NOT NULL,
-                parent_resource_id TEXT NOT NULL,
-                child_resource_id TEXT NOT NULL,
-                relation TEXT NOT NULL,
-                position INTEGER NOT NULL,
-                PRIMARY KEY (cache_key, parent_resource_id, child_resource_id, relation)
             )
             """
         )
@@ -128,185 +200,91 @@ class ResponseCache:
     def close(self) -> None:
         self.conn.close()
 
-    def __enter__(self) -> ResponseCache:
+    def __enter__(self) -> "CacheStore":
         return self
 
     def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
         self.close()
 
     @staticmethod
-    def key(target: str, mode: str, proxy: str | None, tls_identity: str | None = None) -> str:
-        return "|".join([target, mode, proxy or "", tls_identity or "", FETCH_PROFILE_VERSION])
+    def key(target: str, source: str, proxy: str | None, identity: str | None = None) -> str:
+        return "|".join([target, source, proxy or "", identity or "", FETCH_PROFILE_VERSION])
 
     def get(
         self,
         target: str,
-        mode: str,
+        source: str,
         proxy: str | None,
         ttl: int,
-        tls_identity: str | None = None,
-    ) -> FetchResult | None:
-        key = self.key(target, mode, proxy, tls_identity)
+        identity: str | None = None,
+    ) -> CacheRecord | None:
+        key = self.key(target, source, proxy, identity)
         row = self.conn.execute(
             """
-            SELECT
-                primary_resource_id, browser_globals_json, updated_at
-            FROM fetches
+            SELECT observation_json, created_at, updated_at
+            FROM fetch_records
             WHERE cache_key = ?
             """,
             (key,),
         ).fetchone()
         if not row:
             return None
-
-        (
-            primary_resource_id,
-            browser_globals_json,
-            updated_at,
-        ) = row
+        observation_json, created_at, updated_at = row
         if ttl >= 0 and int(time.time()) - int(updated_at) > ttl:
             return None
-
-        resource_rows = self.conn.execute(
-            """
-            SELECT
-                resource_id, parent_id, kind, url, final_url, status,
-                headers_json, cookies_json, body, error, created_at, updated_at
-            FROM resources
-            WHERE cache_key = ?
-            ORDER BY resource_id
-            """,
-            (key,),
-        ).fetchall()
-        resources = [
-            ResourceObservation(
-                id=resource_id,
-                parent_id=parent_id,
-                kind=kind,
-                url=url,
-                final_url=final_url,
-                status=status,
-                headers=json.loads(headers_json),
-                cookies=json.loads(cookies_json),
-                body=body,
-                error=error,
-                cache_created_at=resource_created_at,
-                cache_updated_at=resource_updated_at,
-            )
-            for (
-                resource_id,
-                parent_id,
-                kind,
-                url,
-                final_url,
-                status,
-                headers_json,
-                cookies_json,
-                body,
-                error,
-                resource_created_at,
-                resource_updated_at,
-            ) in resource_rows
-        ]
-        primary = next(
-            (resource for resource in resources if resource.id == primary_resource_id),
-            resources[0] if resources else None,
+        observation = _observation_from_json(
+            json.loads(observation_json),
+            target,
+            int(created_at),
+            int(updated_at),
         )
-        if primary is None:
-            return None
-        script_srcs = [resource.url for resource in resources if resource.kind == "script"]
-        return FetchResult(
-            input=target,
-            url=target,
-            final_url=primary.final_url,
-            status=primary.status,
-            headers=primary.headers,
-            cookies=primary.cookies,
-            body=primary.body,
-            mode=mode,
-            error=primary.error,
-            browser_globals=json.loads(browser_globals_json),
-            script_srcs=script_srcs,
-            resources=resources,
-            primary_resource_id=primary_resource_id,
-            cached=True,
-        )
+        return CacheRecord(observation, int(created_at), int(updated_at))
 
     def set(
         self,
         target: str,
-        mode: str,
+        source: str,
         proxy: str | None,
-        fetch: FetchResult,
-        tls_identity: str | None = None,
-    ) -> None:
+        fetch: FetchObservation,
+        identity: str | None = None,
+    ) -> CacheRecord | None:
         if not cache_disposition(fetch).cacheable:
-            return
+            return None
         now = int(time.time())
-        key = self.key(target, mode, proxy, tls_identity)
-        primary = fetch.primary_resource
-        resources = fetch.resources or [primary]
+        key = self.key(target, source, proxy, identity)
+        existing = self.conn.execute(
+            "SELECT created_at FROM fetch_records WHERE cache_key = ?",
+            (key,),
+        ).fetchone()
+        created_at = int(existing[0]) if existing else now
         self.conn.execute(
             """
-            INSERT INTO fetches (
-                cache_key, target, mode, proxy, profile_version, primary_resource_id,
-                browser_globals_json, created_at, updated_at
+            INSERT INTO fetch_records (
+                cache_key, target, source, proxy, identity, profile_version,
+                observation_json, created_at, updated_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(cache_key) DO UPDATE SET
                 target = excluded.target,
-                mode = excluded.mode,
+                source = excluded.source,
                 proxy = excluded.proxy,
+                identity = excluded.identity,
                 profile_version = excluded.profile_version,
-                primary_resource_id = excluded.primary_resource_id,
-                browser_globals_json = excluded.browser_globals_json,
+                observation_json = excluded.observation_json,
                 updated_at = excluded.updated_at
             """,
             (
                 key,
                 target,
-                mode,
+                source,
                 proxy,
+                identity or "",
                 FETCH_PROFILE_VERSION,
-                primary.id,
-                json.dumps(fetch.browser_globals),
-                now,
+                json.dumps(_observation_to_json(fetch), sort_keys=True),
+                created_at,
                 now,
             ),
         )
-        self.conn.execute("DELETE FROM resource_links WHERE cache_key = ?", (key,))
-        self.conn.execute("DELETE FROM resources WHERE cache_key = ?", (key,))
-        for resource in resources:
-            self.conn.execute(
-                """
-                INSERT INTO resources (
-                    cache_key, resource_id, parent_id, kind, url, final_url, status,
-                    headers_json, cookies_json, body, error, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    key,
-                    resource.id,
-                    resource.parent_id,
-                    resource.kind,
-                    resource.url,
-                    resource.final_url,
-                    resource.status,
-                    json.dumps(resource.headers, sort_keys=True),
-                    json.dumps(resource.cookies, sort_keys=True),
-                    resource.body,
-                    resource.error,
-                    now,
-                    now,
-                ),
-            )
-        for index, resource in enumerate(resources):
-            if resource.parent_id:
-                self.conn.execute(
-                    """
-                    INSERT INTO resource_links (
-                        cache_key, parent_resource_id, child_resource_id, relation, position
-                    ) VALUES (?, ?, ?, ?, ?)
-                    """,
-                    (key, resource.parent_id, resource.id, resource.kind, index),
-                )
         self.conn.commit()
+        record = self.get(target, source, proxy, -1, identity)
+        assert record is not None
+        return record

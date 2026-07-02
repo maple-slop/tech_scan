@@ -26,14 +26,17 @@ RESULT_JSON = {
     "url": "https://example.com",
     "final_url": "https://example.com",
     "status": 200,
-    "mode": "requests",
+    "scan_mode": "requests",
+    "fetch_mode": "requests",
     "providers": ["builtin"],
-    "cached": True,
-    "cache_lookup": "hit",
-    "cache_stored": None,
-    "cache_reason": None,
-    "cache_created_at": 1710000000,
-    "cache_updated_at": 1710000100,
+    "cache": {
+        "policy": "use",
+        "lookup": "hit",
+        "write": "not_attempted",
+        "reason": None,
+        "created_at": 1710000000,
+        "updated_at": 1710000100,
+    },
     "observations": [],
     "technologies": [
         {
@@ -70,14 +73,16 @@ class OutputTests(unittest.TestCase):
         self.assertIn("url: https://example.com", output)
         self.assertIn("final_url: https://example.com", output)
         self.assertIn("status: 200", output)
-        self.assertIn("mode: requests", output)
+        self.assertIn("scan_mode: requests", output)
+        self.assertIn("fetch_mode: requests", output)
         self.assertIn("providers: builtin", output)
-        self.assertIn("cached: True", output)
-        self.assertIn("cache_lookup: hit", output)
-        self.assertIn("cache_stored: None", output)
-        self.assertIn("cache_reason: None", output)
-        self.assertIn("cache_created_at: 1710000000", output)
-        self.assertIn("cache_updated_at: 1710000100", output)
+        self.assertIn("cache:", output)
+        self.assertIn("policy: use", output)
+        self.assertIn("lookup: hit", output)
+        self.assertIn("write: not_attempted", output)
+        self.assertIn("reason: None", output)
+        self.assertIn("created_at: 1710000000", output)
+        self.assertIn("updated_at: 1710000100", output)
         self.assertIn("error: None", output)
         self.assertIn("observations: none", output)
 
@@ -208,8 +213,22 @@ class OutputTests(unittest.TestCase):
         self.assertEqual(parse_args([]).timeout, 10)
         self.assertEqual(parse_args(["--timeout", "2.5"]).timeout, 2.5)
 
-    def test_null_mode_is_accepted(self):
-        self.assertEqual(parse_args(["--mode", "null"]).mode, "null")
+    def test_null_mode_is_rejected_and_cache_only_is_accepted(self):
+        with redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                parse_args(["--mode", "null"])
+        self.assertEqual(parse_args(["--cache", "only"]).cache, "only")
+
+    def test_cache_policy_flag(self):
+        self.assertEqual(parse_args([]).cache, "use")
+        for policy in ["use", "refresh", "only", "off"]:
+            self.assertEqual(parse_args(["--cache", policy]).cache, policy)
+        with redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                parse_args(["--cache", "invalid"])
+        with redirect_stderr(io.StringIO()):
+            with self.assertRaises(SystemExit):
+                parse_args(["--refresh"])
 
     def test_main_jsonl_outputs_two_results_for_bare_domain(self):
         with TemporaryDirectory() as tmpdir:
@@ -312,7 +331,7 @@ class OutputTests(unittest.TestCase):
         lines = [json.loads(line) for line in stdout.getvalue().splitlines()]
         self.assertEqual(len(lines), 1)
         self.assertIsNone(lines[0]["url"])
-        self.assertEqual(lines[0]["cache_lookup"], "not_applicable")
+        self.assertEqual(lines[0]["cache"]["lookup"], "not_applicable")
         self.assertIn("scheme is required", lines[0]["error"])
 
     def test_main_human_output_separates_entries_with_blank_line(self):

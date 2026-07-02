@@ -24,7 +24,8 @@ echo 'https://example.com' | uv run -m tech_scan
 echo 'https://example.com' | uv run -m tech_scan --mode requests --output jsonl
 echo 'https://example.com' | CHROMIUM_PATH=/usr/bin/chromium uv run -m tech_scan --mode browser
 echo 'https://example.com' | uv run -m tech_scan --mode auto --verbosity 1
-echo 'https://example.com' | uv run -m tech_scan --mode null
+echo 'https://example.com' | uv run -m tech_scan --cache only
+echo 'https://example.com' | uv run -m tech_scan --cache refresh
 echo 'https://example.com' | uv run -m tech_scan --mode browser --concurrency 4 --timeout 10
 echo 'https://example.com' | uv run -m tech_scan --sanity-timeout 0.5
 echo 'https://example.com' | uv run -m tech_scan --proxy http://127.0.0.1:8080 --ca-bundle ~/.mitmproxy/mitmproxy-ca-cert.pem
@@ -37,9 +38,15 @@ Fetch modes:
 - `requests`: browser-like HTTP request headers, no JavaScript execution.
 - `browser`: Playwright Chromium rendering. Browser concurrency should use the async Playwright path, not shared sync Playwright objects across threads.
 - `auto`: requests first, browser only for likely missed content: request errors, `401`/`403`/`429`/`503`, no useful response, explicit JavaScript-required text, or sparse SPA shells with no useful findings.
-- `null`: no-network mode. It performs detection only from existing cached fetch observations, reports a clean cache-miss error for uncached inputs, and must not run sanity checks, requests fetching, browser fetching, or cache writes.
 
-Cached `auto` scans must not create new network observations. If cached requests data triggers browser fallback, use cached browser data when present; if browser cache is missing, keep the cached requests result and add a non-scoring `browser_fallback_skipped` observation. Use `--refresh` to perform live fetch work and fill missing cache entries.
+Cache policies:
+
+- `--cache use`: default. Use cache hits, otherwise run sanity/fetch and write cacheable observations.
+- `--cache refresh`: skip cache lookup, run sanity/fetch, and rewrite/drop according to cache policy.
+- `--cache only`: no-network mode. It performs detection only from existing cached fetch observations, reports a clean cache-miss error for uncached inputs, and must not run sanity checks, requests fetching, browser fetching, or cache writes.
+- `--cache off`: disable cache lookup and cache writes; always perform live scan work.
+
+Cached `auto` scans must not create new network observations. If cached requests data triggers browser fallback, use cached browser data when present; if browser cache is missing, keep the cached requests result and add a non-scoring `browser_fallback_skipped` observation. Use `--cache refresh` or `--cache off` to perform live fetch work and fill or bypass missing cache entries.
 
 The default per-target timeout is `10` seconds unless the CLI code says otherwise. If changing timeout semantics, update this file, CLI help, tests, and smoke commands together.
 
@@ -68,14 +75,15 @@ Diagnostics:
 
 - `tech_scan/cli.py`: argparse setup, stdin/stdout handling, validation, and process exit codes.
 - `tech_scan/scheduler.py`: concurrency, async browser pool lifecycle, result printing order, and Ctrl-C/SIGINT cancellation behavior.
-- `tech_scan/scanner.py`: per-target scan orchestration for target expansion, cache lookup/write, sanity checks, fetcher execution, auto browser fallback, provider execution, and result assembly.
+- `tech_scan/scanner.py`: per-target scan orchestration for target expansion, scan strategy, auto browser fallback, provider execution, observations, and result assembly.
+- `tech_scan/fetch_pipeline.py`: cache lookup/write, sanity checks, fetcher execution, cache-only resolution, and redirect alias writes.
 - `tech_scan/cli_config.py`: CLI-derived TLS, CA bundle, Chromium, and cache identity helpers.
 - `tech_scan/fetchers/`: requests fetcher, browser fetcher, headers, resource capture, and auto browser fallback heuristic.
-- `tech_scan/cache.py`: SQLite cache for fetched resource observations and links.
+- `tech_scan/cache.py`: SQLite cache store and cacheability policy for fetched observations.
 - `tech_scan/providers/`: builtin rules and vendored `wappalyzergo` fingerprints.
 - `tech_scan/providers/wappalyzer_engine.py`: internal Wappalyzer fingerprint engine used by the vendored `wappalyzergo` provider; not a public provider.
 - `tech_scan/output.py`: human and JSONL output formatting.
-- `tech_scan/models.py`: `FetchResult` and `Finding`.
+- `tech_scan/models.py`: fetch observations, resolved observations, scan results, findings, and output cache metadata.
 - `tech_scan/normalize.py`: target expansion from stdin input into concrete HTTP/HTTPS URL candidates.
 - `tech_scan/html_extract.py`: shared lightweight HTML extraction for scripts, meta tags, and URL-bearing attributes.
 - `tech_scan/url_policy.py`: shared same-host and redirect URL helpers.
@@ -94,7 +102,7 @@ The cache stores fetched resource observations, not provider results. Provider f
 Cache keys should depend on fetch identity:
 
 - normalized target
-- fetch mode
+- fetch source (`requests` or `browser`)
 - proxy identity
 - TLS trust identity (`--ca-bundle` or `--insecure`)
 - fetch profile version
@@ -103,23 +111,23 @@ Do not key cache rows by provider set.
 
 Cache schema compatibility is intentionally tied to `FETCH_PROFILE_VERSION`. When the cache schema changes, bump the profile version directly; do not add migration/backfill code unless explicitly requested. Old cache DBs may require deletion or a new `--db` path.
 
-Fetch observations use normalized resource tables:
+Fetch observations use one JSON cache record per fetch key:
 
-- `fetches` identifies the scan target and primary resource.
-- `resources` stores documents, scripts, sanity results, and future resource types with headers/body/error plus resource-level cache timestamps.
-- `resource_links` links a parent resource to subresources by resource ID.
+- `fetch_records` identifies the concrete target, fetch source, proxy, identity, and profile version.
+- `observation_json` stores the full fetched observation, including primary document, resources, browser globals, script URLs, headers, cookies, body, and error.
+- Same-host redirect aliases write duplicate cache records for the alias target using the same observation JSON.
 
-Output includes top-level `cache_created_at` and `cache_updated_at` from the primary resource. Live uncached results should report `None`; cached rows should surface the primary resource timestamps.
+Output includes `scan_mode`, `fetch_mode`, and a nested `cache` object with `policy`, `lookup`, `write`, `reason`, `created_at`, and `updated_at`. Do not reintroduce old top-level cache fields such as `cached`, `cache_lookup`, `cache_stored`, `cache_reason`, `cache_created_at`, or `cache_updated_at`.
 
 Requests mode fetches directly visible `<script src>` resources and links them to the document resource. Third-party scripts are allowed unless blocked by vendored EasyList/EasyPrivacy rules. Keep script fetching bounded and make script failures non-fatal to the main document fetch.
 
 Redirects must stay on the same hostname. This prevents an app that redirects to a third-party SSO provider from being reported as the third-party site.
 
-Fresh fetches run a default-on DNS/TCP sanity check before requests or browser mode. Bare domains expand to `http://` and `https://` scans; each concrete URL checks its explicit port when present, otherwise `80` for HTTP or `443` for HTTPS. Cache hits bypass this check. Cache server/target-side sanity negatives such as `no-open-port`, `dns-error`, and `invalid-port`; `--refresh` is the way to force a recheck before TTL expiry.
+Fresh fetches run a default-on DNS/TCP sanity check before requests or browser mode. Bare domains expand to `http://` and `https://` scans; each concrete URL checks its explicit port when present, otherwise `80` for HTTP or `443` for HTTPS. Cache hits bypass this check. Cache server/target-side sanity negatives such as `no-open-port`, `dns-error`, and `invalid-port`; `--cache refresh` is the way to force a recheck before TTL expiry.
 
 Cache successful responses, HTTP error statuses, and target/server-side negative outcomes. Do not cache local/client failures such as missing Playwright, missing Chromium/browser executable, browser launch failures, or local browser context/session startup failures. Cache diagnostics at verbosity 3 should include write/drop reasons.
 
-`--mode null` reads existing `requests`/`browser` cache entries for the concrete target and recomputes provider findings from those cached observations. When both requests and browser cache entries exist, prefer a successful `2xx` browser observation; otherwise fall back to requests cache first. A null-mode cache miss is intentionally uncacheable and should report `cache_stored=false`, `cache_reason="null-cache-miss"`, and a short error without stack trace at default verbosity.
+`--cache only` reads existing cache entries for the concrete target and recomputes provider findings from those cached observations. With `--mode requests`, only requests cache may satisfy the scan. With `--mode browser`, only browser cache may satisfy the scan. With `--mode auto`, prefer a successful `2xx` browser observation, otherwise fall back to requests cache first, then browser cache. A cache-only miss is intentionally uncacheable and should report `fetch_mode=null`, `cache.lookup="miss"`, `cache.write="not_attempted"`, `cache.reason="cache-only-miss"`, and a short error without stack trace at default verbosity.
 
 Fetchers receive one concrete URL and must fetch only that URL. Do not reintroduce protocol fallback inside fetchers; all HTTP/HTTPS expansion belongs before cache, sanity, and fetch in the scanner/normalization layer.
 
@@ -203,7 +211,7 @@ Protect these behaviors with tests when touched:
 - Raw observations stay separate from technologies and do not affect scoring.
 - Cache stores fetch observations and is independent of provider set.
 - Cache policy distinguishes server/target-side negatives from local/client failures.
-- Resource-level cache timestamps round-trip and appear in output.
+- Cache record timestamps round-trip and appear in nested output cache metadata.
 - Scanner orchestration preserves cache, sanity, fetcher, provider, and auto-fallback behavior.
 - Auto mode does not use browser for small static pages.
 - Same-host redirect restriction.

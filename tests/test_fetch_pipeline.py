@@ -10,7 +10,7 @@ from tech_scan.models import FetchResult, ResourceObservation
 from tech_scan.sanity import SanityResult
 
 
-def args_for(db, refresh=False, mode="requests"):
+def args_for(db, refresh=False, mode="requests", cache=None):
     return argparse.Namespace(
         db=db,
         mode=mode,
@@ -20,6 +20,7 @@ def args_for(db, refresh=False, mode="requests"):
         concurrency=1,
         cache_ttl=86400,
         refresh=refresh,
+        cache=cache or ("refresh" if refresh else "use"),
         output="jsonl",
         verbosity=0,
         ca_bundle=None,
@@ -78,17 +79,15 @@ class FetchPipelineTests(unittest.IsolatedAsyncioTestCase):
                         "https://example.com",
                     )
 
-        self.assertFalse(first.cached)
         self.assertEqual(first_outcome.lookup, "miss")
         self.assertTrue(first_outcome.stored)
         self.assertEqual(first_outcome.reason, "http-status-200")
-        self.assertTrue(second.cached)
         self.assertEqual(second_outcome.lookup, "hit")
         self.assertIsNone(second_outcome.stored)
         self.assertIsNone(second_outcome.reason)
         self.assertEqual(fetch_mock.call_count, 1)
 
-    async def test_refresh_bypasses_cache_lookup_and_writes_fresh_fetch(self):
+    async def test_cache_refresh_bypasses_cache_lookup_and_writes_fresh_fetch(self):
         with TemporaryDirectory() as tmpdir:
             db = Path(tmpdir) / "results.db"
             fetch = document_fetch()
@@ -100,13 +99,12 @@ class FetchPipelineTests(unittest.IsolatedAsyncioTestCase):
                         "example.com",
                         "https://example.com",
                     )
-                    refreshed, outcome = await self.pipeline(args_for(db, refresh=True)).fetch(
+                    refreshed, outcome = await self.pipeline(args_for(db, cache="refresh")).fetch(
                         "requests",
                         "example.com",
                         "https://example.com",
                     )
 
-        self.assertFalse(refreshed.cached)
         self.assertEqual(outcome.lookup, "refresh")
         self.assertTrue(outcome.stored)
         self.assertEqual(outcome.reason, "http-status-200")
@@ -209,48 +207,46 @@ class FetchPipelineTests(unittest.IsolatedAsyncioTestCase):
                         "https://example.com",
                     )
 
-        self.assertFalse(first.cached)
         self.assertTrue(first_outcome.stored)
-        self.assertTrue(second.cached)
         self.assertEqual(second_outcome.lookup, "hit")
         self.assertEqual(fetch_mock.call_count, 1)
 
-    async def test_null_mode_cache_miss_does_not_run_sanity_or_fetcher(self):
+    async def test_cache_only_miss_does_not_run_sanity_or_fetcher(self):
         with TemporaryDirectory() as tmpdir:
-            args = args_for(Path(tmpdir) / "results.db", mode="null")
+            args = args_for(Path(tmpdir) / "results.db", mode="auto", cache="only")
             with patch("tech_scan.fetch_pipeline.check_target_ports") as sanity_mock:
                 with patch("tech_scan.fetch_pipeline.fetch_requests") as requests_mock:
                     with patch("tech_scan.fetch_pipeline.fetch_browser_async") as browser_mock:
-                        fetch, outcome = await self.pipeline(args).fetch(
-                            "null",
+                        resolved = self.pipeline(args).select_cache_only(
                             "example.com",
                             "https://example.com",
+                            ["requests", "browser"],
                         )
-                        second_fetch, second_outcome = await self.pipeline(args).fetch(
-                            "null",
+                        second = self.pipeline(args).select_cache_only(
                             "example.com",
                             "https://example.com",
+                            ["requests", "browser"],
                         )
 
-        self.assertEqual(fetch.mode, "null")
-        self.assertEqual(fetch.error, "null fetch mode cache miss; no cached fetch observation for target")
-        self.assertEqual(fetch.primary_resource.kind, "null")
-        self.assertEqual(outcome.lookup, "miss")
-        self.assertFalse(outcome.stored)
-        self.assertEqual(outcome.reason, "null-cache-miss")
-        self.assertFalse(second_fetch.cached)
-        self.assertEqual(second_outcome.lookup, "miss")
-        self.assertFalse(second_outcome.stored)
-        self.assertEqual(second_outcome.reason, "null-cache-miss")
+        self.assertIsNone(resolved.fetch_mode)
+        self.assertEqual(resolved.observation.error, "cache-only miss; no cached fetch observation for target")
+        self.assertEqual(resolved.observation.primary_resource.kind, "cache-only")
+        self.assertEqual(resolved.cache.lookup, "miss")
+        self.assertIsNone(resolved.cache.stored)
+        self.assertEqual(resolved.cache.reason, "cache-only-miss")
+        self.assertIsNone(second.fetch_mode)
+        self.assertEqual(second.cache.lookup, "miss")
+        self.assertIsNone(second.cache.stored)
+        self.assertEqual(second.cache.reason, "cache-only-miss")
         sanity_mock.assert_not_called()
         requests_mock.assert_not_called()
         browser_mock.assert_not_called()
 
-    async def test_null_mode_reads_requests_cache_without_network(self):
+    async def test_cache_only_reads_requests_cache_without_network(self):
         with TemporaryDirectory() as tmpdir:
             db = Path(tmpdir) / "results.db"
             live_args = args_for(db)
-            null_args = args_for(db, mode="null")
+            cache_args = args_for(db, mode="requests", cache="only")
             fetch = document_fetch()
 
             with patch("tech_scan.fetch_pipeline.check_target_ports", return_value=ok_sanity()):
@@ -263,22 +259,21 @@ class FetchPipelineTests(unittest.IsolatedAsyncioTestCase):
 
             with patch("tech_scan.fetch_pipeline.check_target_ports") as sanity_mock:
                 with patch("tech_scan.fetch_pipeline.fetch_requests") as requests_mock:
-                    cached, outcome = await self.pipeline(null_args).fetch(
-                        "null",
+                    resolved = self.pipeline(cache_args).select_cache_only(
                         "example.com",
                         "https://example.com",
+                        ["requests"],
                     )
 
-        self.assertTrue(cached.cached)
-        self.assertEqual(cached.mode, "null")
-        self.assertEqual(cached.status, 200)
-        self.assertEqual(outcome.lookup, "hit")
-        self.assertIsNone(outcome.stored)
-        self.assertIsNone(outcome.reason)
+        self.assertEqual(resolved.fetch_mode, "requests")
+        self.assertEqual(resolved.observation.status, 200)
+        self.assertEqual(resolved.cache.lookup, "hit")
+        self.assertIsNone(resolved.cache.stored)
+        self.assertIsNone(resolved.cache.reason)
         sanity_mock.assert_not_called()
         requests_mock.assert_not_called()
 
-    async def test_null_mode_prefers_successful_browser_cache_over_requests_cache(self):
+    async def test_cache_only_auto_prefers_successful_browser_cache_over_requests_cache(self):
         with TemporaryDirectory() as tmpdir:
             db = Path(tmpdir) / "results.db"
             requests_fetch = document_fetch(headers={"server": "requests"})
@@ -299,17 +294,17 @@ class FetchPipelineTests(unittest.IsolatedAsyncioTestCase):
                         "https://example.com",
                     )
 
-            cached, outcome = await self.pipeline(args_for(db, mode="null")).fetch(
-                "null",
+            resolved = self.pipeline(args_for(db, mode="auto", cache="only")).select_cache_only(
                 "example.com",
                 "https://example.com",
+                ["requests", "browser"],
             )
 
-        self.assertEqual(cached.mode, "null")
-        self.assertEqual(cached.headers["server"], "browser")
-        self.assertEqual(outcome.lookup, "hit")
+        self.assertEqual(resolved.fetch_mode, "browser")
+        self.assertEqual(resolved.observation.headers["server"], "browser")
+        self.assertEqual(resolved.cache.lookup, "hit")
 
-    async def test_null_mode_uses_requests_cache_when_browser_cache_is_not_2xx(self):
+    async def test_cache_only_auto_uses_requests_cache_when_browser_cache_is_not_2xx(self):
         with TemporaryDirectory() as tmpdir:
             db = Path(tmpdir) / "results.db"
             requests_fetch = document_fetch(headers={"server": "requests"})
@@ -334,21 +329,21 @@ class FetchPipelineTests(unittest.IsolatedAsyncioTestCase):
                         "https://example.com",
                     )
 
-            cached, outcome = await self.pipeline(args_for(db, mode="null")).fetch(
-                "null",
+            resolved = self.pipeline(args_for(db, mode="auto", cache="only")).select_cache_only(
                 "example.com",
                 "https://example.com",
+                ["requests", "browser"],
             )
 
-        self.assertEqual(cached.mode, "null")
-        self.assertEqual(cached.headers["server"], "requests")
-        self.assertEqual(outcome.lookup, "hit")
+        self.assertEqual(resolved.fetch_mode, "requests")
+        self.assertEqual(resolved.observation.headers["server"], "requests")
+        self.assertEqual(resolved.cache.lookup, "hit")
 
-    async def test_null_mode_refresh_bypasses_cache_and_does_not_store(self):
+    async def test_cache_off_bypasses_cache_and_does_not_store(self):
         with TemporaryDirectory() as tmpdir:
             db = Path(tmpdir) / "results.db"
             live_args = args_for(db)
-            null_args = args_for(db, refresh=True, mode="null")
+            off_args = args_for(db, mode="requests", cache="off")
             fetch = document_fetch()
 
             with patch("tech_scan.fetch_pipeline.check_target_ports", return_value=ok_sanity()):
@@ -360,18 +355,16 @@ class FetchPipelineTests(unittest.IsolatedAsyncioTestCase):
                     )
 
             with patch("tech_scan.fetch_pipeline.check_target_ports") as sanity_mock:
-                with patch("tech_scan.fetch_pipeline.fetch_requests") as requests_mock:
-                    missed, outcome = await self.pipeline(null_args).fetch(
-                        "null",
+                with patch("tech_scan.fetch_pipeline.fetch_requests", return_value=fetch) as requests_mock:
+                    fresh, outcome = await self.pipeline(off_args).fetch(
+                        "requests",
                         "example.com",
                         "https://example.com",
                     )
 
-        self.assertFalse(missed.cached)
-        self.assertEqual(missed.mode, "null")
-        self.assertEqual(missed.error, "null fetch mode cache miss; no cached fetch observation for target")
-        self.assertEqual(outcome.lookup, "refresh")
-        self.assertFalse(outcome.stored)
-        self.assertEqual(outcome.reason, "null-cache-miss")
-        sanity_mock.assert_not_called()
-        requests_mock.assert_not_called()
+        self.assertEqual(fresh.status, 200)
+        self.assertEqual(outcome.lookup, "bypass")
+        self.assertIsNone(outcome.stored)
+        self.assertEqual(outcome.reason, "http-status-200")
+        sanity_mock.assert_called_once()
+        requests_mock.assert_called_once()

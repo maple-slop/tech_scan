@@ -133,17 +133,16 @@ def format_human(result: OutputResult, color: bool = True) -> str:
             f"  url: {result_json.get('url')}",
             f"  final_url: {result_json.get('final_url')}",
             f"  status: {colorize(status_text, status_style, color)}",
-            f"  mode: {result_json.get('mode')}",
+            f"  scan_mode: {result_json.get('scan_mode')}",
+            f"  fetch_mode: {result_json.get('fetch_mode')}",
             f"  providers: {', '.join(result_json.get('providers') or [])}",
-            f"  cached: {result_json.get('cached')}",
-            f"  cache_lookup: {result_json.get('cache_lookup')}",
-            f"  cache_stored: {result_json.get('cache_stored')}",
-            f"  cache_reason: {result_json.get('cache_reason')}",
-            f"  cache_created_at: {result_json.get('cache_created_at')}",
-            f"  cache_updated_at: {result_json.get('cache_updated_at')}",
             f"  error: {colorize(str(error), 'red', color) if error else None}",
         ]
     )
+    cache = result_json.get("cache") or {}
+    lines.append("  cache:")
+    for name in ["policy", "lookup", "write", "reason", "created_at", "updated_at"]:
+        lines.append(f"     {name}: {cache.get(name)}")
     observations = result_json.get("observations") or []
     if observations:
         lines.append("  observations:")

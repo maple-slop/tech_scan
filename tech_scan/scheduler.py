@@ -44,10 +44,11 @@ def _print_ready(args: argparse.Namespace, result: SchedulerResult, print_result
     result_json = _result_json(result)
     diagnostics = getattr(args, "_diagnostics", None)
     if diagnostics:
+        cache = result_json.get("cache") or {}
         diagnostics.log(
             3,
             f"result ready: target={result_json.get('url')} "
-            f"cached={str(bool(result_json.get('cached'))).lower()} "
+            f"cache.lookup={cache.get('lookup')} "
             f"providers={','.join(result_json.get('providers') or [])}",
         )
     print_result(result)

@@ -27,7 +27,7 @@ class ResourceObservation:
 
 
 @dataclass(frozen=True)
-class FetchResult:
+class FetchObservation:
     input: str
     url: str
     final_url: str | None
@@ -41,7 +41,6 @@ class FetchResult:
     script_srcs: list[str] = field(default_factory=list)
     resources: list[ResourceObservation] = field(default_factory=list)
     primary_resource_id: str | None = None
-    cached: bool = False
 
     @property
     def primary_resource(self) -> ResourceObservation:
@@ -70,6 +69,64 @@ class FetchResult:
     @property
     def script_bodies(self) -> list[str]:
         return [resource.body for resource in self.script_resources if resource.body]
+
+
+FetchResult = FetchObservation
+
+
+@dataclass(frozen=True)
+class CacheInfo:
+    policy: str
+    lookup: str
+    write: str
+    reason: str | None = None
+    created_at: int | None = None
+    updated_at: int | None = None
+
+    @classmethod
+    def not_applicable(cls, policy: str) -> "CacheInfo":
+        return cls(
+            policy=policy,
+            lookup="not_applicable",
+            write="not_attempted",
+        )
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "policy": self.policy,
+            "lookup": self.lookup,
+            "write": self.write,
+            "reason": self.reason,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+
+    @property
+    def stored(self) -> bool | None:
+        if self.write == "stored":
+            return True
+        if self.write == "dropped":
+            return False
+        return None
+
+    @classmethod
+    def from_json(cls, data: dict[str, Any]) -> "CacheInfo":
+        return cls(
+            policy=str(data["policy"]),
+            lookup=str(data["lookup"]),
+            write=str(data["write"]),
+            reason=data.get("reason"),
+            created_at=data.get("created_at"),
+            updated_at=data.get("updated_at"),
+        )
+
+
+@dataclass(frozen=True)
+class ResolvedObservation:
+    observation: FetchObservation
+    fetch_mode: str | None
+    cache: CacheInfo
+    network_used: bool
 
 
 @dataclass
@@ -156,14 +213,10 @@ class ScanResult:
     url: str | None
     final_url: str | None
     status: int | None
-    mode: str
+    scan_mode: str
+    fetch_mode: str | None
     providers: list[str]
-    cached: bool
-    cache_lookup: str
-    cache_stored: bool | None
-    cache_reason: str | None
-    cache_created_at: int | None
-    cache_updated_at: int | None
+    cache: CacheInfo
     observations: list[Observation]
     technologies: list[TechnologyResult]
     error: str | None
@@ -175,20 +228,17 @@ class ScanResult:
         mode: str,
         provider_names: list[str],
         error: str,
+        cache_policy: str = "use",
     ) -> "ScanResult":
         return cls(
             input=raw_target,
             url=None,
             final_url=None,
             status=None,
-            mode=mode,
+            scan_mode=mode,
+            fetch_mode=None,
             providers=list(provider_names),
-            cached=False,
-            cache_lookup="not_applicable",
-            cache_stored=None,
-            cache_reason=None,
-            cache_created_at=None,
-            cache_updated_at=None,
+            cache=CacheInfo.not_applicable(cache_policy),
             observations=[],
             technologies=[],
             error=error,
@@ -201,14 +251,10 @@ class ScanResult:
             url=data.get("url"),
             final_url=data.get("final_url"),
             status=data.get("status"),
-            mode=str(data["mode"]),
+            scan_mode=str(data["scan_mode"]),
+            fetch_mode=data.get("fetch_mode"),
             providers=[str(item) for item in data.get("providers") or []],
-            cached=bool(data["cached"]),
-            cache_lookup=str(data["cache_lookup"]),
-            cache_stored=data.get("cache_stored"),
-            cache_reason=data.get("cache_reason"),
-            cache_created_at=data.get("cache_created_at"),
-            cache_updated_at=data.get("cache_updated_at"),
+            cache=CacheInfo.from_json(data["cache"]),
             observations=[
                 Observation.from_json(item)
                 for item in data.get("observations") or []
@@ -226,14 +272,10 @@ class ScanResult:
             "url": self.url,
             "final_url": self.final_url,
             "status": self.status,
-            "mode": self.mode,
+            "scan_mode": self.scan_mode,
+            "fetch_mode": self.fetch_mode,
             "providers": list(self.providers),
-            "cached": self.cached,
-            "cache_lookup": self.cache_lookup,
-            "cache_stored": self.cache_stored,
-            "cache_reason": self.cache_reason,
-            "cache_created_at": self.cache_created_at,
-            "cache_updated_at": self.cache_updated_at,
+            "cache": self.cache.to_json(),
             "observations": [observation.to_json() for observation in self.observations],
             "technologies": [technology.to_json() for technology in self.technologies],
             "error": self.error,

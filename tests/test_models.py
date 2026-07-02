@@ -1,6 +1,6 @@
 import unittest
 
-from tech_scan.models import Observation, ScanResult, TechnologyResult
+from tech_scan.models import CacheInfo, Observation, ScanResult, TechnologyResult
 
 
 class ModelResultTests(unittest.TestCase):
@@ -10,14 +10,16 @@ class ModelResultTests(unittest.TestCase):
             url="https://example.com",
             final_url="https://example.com",
             status=200,
-            mode="requests",
+            scan_mode="auto",
+            fetch_mode="requests",
             providers=["builtin"],
-            cached=True,
-            cache_lookup="hit",
-            cache_stored=None,
-            cache_reason=None,
-            cache_created_at=1710000000,
-            cache_updated_at=1710000100,
+            cache=CacheInfo(
+                policy="use",
+                lookup="hit",
+                write="not_attempted",
+                created_at=1710000000,
+                updated_at=1710000100,
+            ),
             observations=[
                 Observation(kind="header", name="Server", value="example"),
             ],
@@ -40,14 +42,10 @@ class ModelResultTests(unittest.TestCase):
                 "url",
                 "final_url",
                 "status",
-                "mode",
+                "scan_mode",
+                "fetch_mode",
                 "providers",
-                "cached",
-                "cache_lookup",
-                "cache_stored",
-                "cache_reason",
-                "cache_created_at",
-                "cache_updated_at",
+                "cache",
                 "observations",
                 "technologies",
                 "error",
@@ -67,9 +65,9 @@ class ModelResultTests(unittest.TestCase):
             "scheme is required",
         )
 
-        self.assertEqual(result.cache_lookup, "not_applicable")
-        self.assertIsNone(result.cache_stored)
-        self.assertIsNone(result.cache_reason)
+        self.assertEqual(result.cache.lookup, "not_applicable")
+        self.assertEqual(result.cache.write, "not_attempted")
+        self.assertIsNone(result.cache.reason)
         self.assertEqual(result.observations, [])
         self.assertEqual(result.technologies, [])
         self.assertIn("scheme is required", result.error)

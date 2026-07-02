@@ -11,7 +11,7 @@ from tech_scan.scanner import scan_input, scan_target as scan_concrete_target
 from tech_scan.sanity import SanityResult
 
 
-def args_for(db, refresh=False, mode="requests", verbosity=0):
+def args_for(db, refresh=False, mode="requests", verbosity=0, cache=None):
     return argparse.Namespace(
         db=db,
         mode=mode,
@@ -21,6 +21,7 @@ def args_for(db, refresh=False, mode="requests", verbosity=0):
         concurrency=1,
         cache_ttl=86400,
         refresh=refresh,
+        cache=cache or ("refresh" if refresh else "use"),
         output="jsonl",
         verbosity=verbosity,
         ca_bundle=None,
@@ -165,8 +166,7 @@ class CliCacheTests(unittest.TestCase):
                 results = scan_input("example.com", args_for(db), ["builtin"], ["builtin"])
 
         self.assertEqual([result["url"] for result in results], ["http://example.com", "https://example.com"])
-        self.assertEqual([result["cached"] for result in results], [False, True])
-        self.assertEqual([result["cache_lookup"] for result in results], ["miss", "hit"])
+        self.assertEqual([result["cache"]["lookup"] for result in results], ["miss", "hit"])
         self.assertEqual(fetch_mock.call_count, 1)
         self.assertEqual(self.sanity_mock.call_count, 1)
 
@@ -227,18 +227,17 @@ class CliCacheTests(unittest.TestCase):
                     ["builtin", "wappalyzergo"],
                 )
 
-            self.assertFalse(first["cached"])
-            self.assertEqual(first["cache_lookup"], "miss")
-            self.assertTrue(first["cache_stored"])
-            self.assertEqual(first["cache_reason"], "http-status-200")
-            self.assertTrue(second["cached"])
-            self.assertEqual(second["cache_lookup"], "hit")
-            self.assertIsNone(second["cache_stored"])
-            self.assertIsNone(second["cache_reason"])
+            self.assertNotEqual(first["cache"]["lookup"], "hit")
+            self.assertEqual(first["cache"]["lookup"], "miss")
+            self.assertEqual(first["cache"]["write"], "stored")
+            self.assertEqual(first["cache"]["reason"], "http-status-200")
+            self.assertEqual(second["cache"]["lookup"], "hit")
+            self.assertEqual(second["cache"]["write"], "not_attempted")
+            self.assertIsNone(second["cache"]["reason"])
             self.assertEqual(fetch_mock.call_count, 1)
             self.assertEqual(second["providers"], ["builtin", "wappalyzergo"])
 
-    def test_refresh_forces_new_fetch_write(self):
+    def test_cache_refresh_forces_new_fetch_write(self):
         with TemporaryDirectory() as tmpdir:
             db = Path(tmpdir) / "results.db"
             fetch = FetchResult(
@@ -256,15 +255,15 @@ class CliCacheTests(unittest.TestCase):
                 scan_target("example.com", args_for(db), ["builtin"], ["builtin"])
                 refreshed = scan_target(
                     "example.com",
-                    args_for(db, refresh=True),
+                    args_for(db, cache="refresh"),
                     ["builtin"],
                     ["builtin"],
                 )
 
-            self.assertFalse(refreshed["cached"])
-            self.assertEqual(refreshed["cache_lookup"], "refresh")
-            self.assertTrue(refreshed["cache_stored"])
-            self.assertEqual(refreshed["cache_reason"], "http-status-200")
+            self.assertNotEqual(refreshed["cache"]["lookup"], "hit")
+            self.assertEqual(refreshed["cache"]["lookup"], "refresh")
+            self.assertEqual(refreshed["cache"]["write"], "stored")
+            self.assertEqual(refreshed["cache"]["reason"], "http-status-200")
             self.assertEqual(fetch_mock.call_count, 2)
 
     def test_auto_mode_small_static_response_does_not_call_browser(self):
@@ -290,7 +289,7 @@ class CliCacheTests(unittest.TestCase):
                         ["builtin"],
                     )
 
-            self.assertEqual(result["mode"], "requests")
+            self.assertEqual(result["fetch_mode"], "requests")
             browser_mock.assert_not_called()
 
     def test_browser_cache_identity_includes_chromium_path_env(self):
@@ -325,11 +324,11 @@ class CliCacheTests(unittest.TestCase):
                 with patch.dict("os.environ", {"CHROMIUM_PATH": "/new/chrome"}):
                     second = scan_target("example.com", args, ["builtin"], ["builtin"])
 
-            self.assertFalse(first["cached"])
-            self.assertEqual(first["cache_lookup"], "miss")
-            self.assertFalse(first["cache_stored"])
-            self.assertEqual(first["cache_reason"], "local-client-error")
-            self.assertFalse(second["cached"])
+            self.assertNotEqual(first["cache"]["lookup"], "hit")
+            self.assertEqual(first["cache"]["lookup"], "miss")
+            self.assertEqual(first["cache"]["write"], "dropped")
+            self.assertEqual(first["cache"]["reason"], "local-client-error")
+            self.assertNotEqual(second["cache"]["lookup"], "hit")
             self.assertEqual(fetch_mock.call_count, 2)
             self.assertEqual(second["status"], 200)
 
@@ -363,11 +362,11 @@ class CliCacheTests(unittest.TestCase):
                 first = scan_target("example.com", args, ["builtin"], ["builtin"])
                 second = scan_target("example.com", args, ["builtin"], ["builtin"])
 
-            self.assertFalse(first["cached"])
-            self.assertEqual(first["cache_lookup"], "miss")
-            self.assertFalse(first["cache_stored"])
-            self.assertEqual(first["cache_reason"], "local-client-error")
-            self.assertFalse(second["cached"])
+            self.assertNotEqual(first["cache"]["lookup"], "hit")
+            self.assertEqual(first["cache"]["lookup"], "miss")
+            self.assertEqual(first["cache"]["write"], "dropped")
+            self.assertEqual(first["cache"]["reason"], "local-client-error")
+            self.assertNotEqual(second["cache"]["lookup"], "hit")
             self.assertEqual(fetch_mock.call_count, 2)
             self.assertEqual(second["status"], 200)
 
@@ -399,15 +398,14 @@ class CliCacheTests(unittest.TestCase):
                     ["builtin"],
                 )[0]
 
-        self.assertFalse(first["cached"])
+        self.assertNotEqual(first["cache"]["lookup"], "hit")
         self.assertEqual(first["status"], 301)
-        self.assertEqual(first["cache_lookup"], "miss")
-        self.assertTrue(first["cache_stored"])
-        self.assertEqual(first["cache_reason"], "http-status-301")
-        self.assertTrue(second["cached"])
+        self.assertEqual(first["cache"]["lookup"], "miss")
+        self.assertEqual(first["cache"]["write"], "stored")
+        self.assertEqual(first["cache"]["reason"], "http-status-301")
         self.assertEqual(second["status"], 301)
-        self.assertEqual(second["cache_lookup"], "hit")
-        self.assertIsNone(second["cache_stored"])
+        self.assertEqual(second["cache"]["lookup"], "hit")
+        self.assertEqual(second["cache"]["write"], "not_attempted")
         self.assertEqual(fetch_mock.call_count, 1)
 
     def test_same_host_redirect_alias_is_reused_by_explicit_target(self):
@@ -462,11 +460,10 @@ class CliCacheTests(unittest.TestCase):
                     ["builtin"],
                 )
 
-        self.assertFalse(first["cached"])
-        self.assertEqual(first["cache_lookup"], "miss")
-        self.assertTrue(first["cache_stored"])
-        self.assertTrue(second["cached"])
-        self.assertEqual(second["cache_lookup"], "hit")
+        self.assertNotEqual(first["cache"]["lookup"], "hit")
+        self.assertEqual(first["cache"]["lookup"], "miss")
+        self.assertEqual(first["cache"]["write"], "stored")
+        self.assertEqual(second["cache"]["lookup"], "hit")
         self.assertEqual(fetch_mock.call_count, 1)
         self.assertEqual(self.sanity_mock.call_count, 1)
 
@@ -490,12 +487,11 @@ class CliCacheTests(unittest.TestCase):
                 first = scan_target("example.com", args, ["builtin"], ["builtin"])
                 second = scan_target("example.com", args, ["builtin"], ["builtin"])
 
-        self.assertFalse(first["cached"])
-        self.assertEqual(first["cache_lookup"], "miss")
-        self.assertTrue(first["cache_stored"])
-        self.assertEqual(first["cache_reason"], "blocked-cross-host-redirect")
-        self.assertTrue(second["cached"])
-        self.assertEqual(second["cache_lookup"], "hit")
+        self.assertNotEqual(first["cache"]["lookup"], "hit")
+        self.assertEqual(first["cache"]["lookup"], "miss")
+        self.assertEqual(first["cache"]["write"], "stored")
+        self.assertEqual(first["cache"]["reason"], "blocked-cross-host-redirect")
+        self.assertEqual(second["cache"]["lookup"], "hit")
         self.assertEqual(fetch_mock.call_count, 1)
 
     def test_auto_mode_logs_browser_fallback_reason_at_verbosity_one(self):
@@ -529,7 +525,7 @@ class CliCacheTests(unittest.TestCase):
                 with patch("tech_scan.fetch_pipeline.fetch_browser_async", return_value=browser_fetch):
                     result = scan_target("example.com", args, ["builtin"], ["builtin"])
 
-            self.assertEqual(result["mode"], "browser")
+            self.assertEqual(result["fetch_mode"], "browser")
             self.assertIn("auto switching fetcher", stderr.getvalue())
             self.assertIn("reason=blocking-status-403", stderr.getvalue())
 
@@ -564,7 +560,7 @@ class CliCacheTests(unittest.TestCase):
                 with patch("tech_scan.fetch_pipeline.fetch_browser_async", return_value=browser_fetch):
                     result = scan_target("example.com", args, ["builtin"], ["builtin"])
 
-            self.assertEqual(result["mode"], "browser")
+            self.assertEqual(result["fetch_mode"], "browser")
             self.assertIn("reason=cdn-waf-challenge", stderr.getvalue())
             self.assertNotIn("browser_fallback_failed", str(result["observations"]))
 
@@ -598,7 +594,7 @@ class CliCacheTests(unittest.TestCase):
                 with patch("tech_scan.fetch_pipeline.fetch_browser_async", return_value=browser_fetch):
                     result = scan_target("example.com", args, ["builtin"], ["builtin"])
 
-        self.assertEqual(result["mode"], "requests")
+        self.assertEqual(result["fetch_mode"], "requests")
         self.assertIn(
             {
                 "kind": "auto",
@@ -631,9 +627,8 @@ class CliCacheTests(unittest.TestCase):
             with patch("tech_scan.fetch_pipeline.fetch_browser_async") as browser_mock:
                 result = scan_target("example.com", args_for(db, mode="auto"), ["builtin"], ["builtin"])
 
-        self.assertEqual(result["mode"], "requests")
-        self.assertTrue(result["cached"])
-        self.assertEqual(result["cache_lookup"], "hit")
+        self.assertEqual(result["fetch_mode"], "requests")
+        self.assertEqual(result["cache"]["lookup"], "hit")
         self.assertIn(
             {
                 "kind": "auto",
@@ -680,9 +675,8 @@ class CliCacheTests(unittest.TestCase):
             with patch("tech_scan.fetch_pipeline.fetch_browser_async") as browser_mock:
                 result = scan_target("example.com", args_for(db, mode="auto"), ["builtin"], ["builtin"])
 
-        self.assertEqual(result["mode"], "browser")
-        self.assertTrue(result["cached"])
-        self.assertEqual(result["cache_lookup"], "hit")
+        self.assertEqual(result["fetch_mode"], "browser")
+        self.assertEqual(result["cache"]["lookup"], "hit")
         self.assertEqual(result["status"], 200)
         self.assertEqual(result["technologies"][0]["name"], "nginx")
         self.sanity_mock.assert_not_called()
@@ -772,9 +766,9 @@ class CliCacheTests(unittest.TestCase):
             with patch("tech_scan.fetch_pipeline.fetch_requests") as fetch_mock:
                 result = scan_target("example.com", args_for(db), ["builtin"], ["builtin"])
 
-            self.assertTrue(result["cached"])
-            self.assertIsNotNone(result["cache_created_at"])
-            self.assertIsNotNone(result["cache_updated_at"])
+            self.assertEqual(result["cache"]["lookup"], "hit")
+            self.assertIsNotNone(result["cache"]["created_at"])
+            self.assertIsNotNone(result["cache"]["updated_at"])
             self.sanity_mock.assert_not_called()
             fetch_mock.assert_not_called()
 
@@ -797,11 +791,11 @@ class CliCacheTests(unittest.TestCase):
             self.assertIn("sanity check failed", result["error"])
             again = scan_target("example.com", args_for(db), ["builtin"], ["builtin"])
 
-        self.assertTrue(again["cached"])
+        self.assertEqual(again["cache"]["lookup"], "hit")
         self.assertEqual(again["error"], result["error"])
         self.assertEqual(self.sanity_mock.call_count, 1)
 
-    def test_refresh_reruns_cached_sanity_failure(self):
+    def test_cache_refresh_reruns_cached_sanity_failure(self):
         self.set_sanity_result(
             SanityResult(
                 "no-open-port",
@@ -815,12 +809,12 @@ class CliCacheTests(unittest.TestCase):
             scan_target("example.com", args_for(db), ["builtin"], ["builtin"])
             refreshed = scan_target(
                 "example.com",
-                args_for(db, refresh=True),
+                args_for(db, cache="refresh"),
                 ["builtin"],
                 ["builtin"],
             )
 
-        self.assertFalse(refreshed["cached"])
+        self.assertNotEqual(refreshed["cache"]["lookup"], "hit")
         self.assertEqual(self.sanity_mock.call_count, 2)
 
     def test_sanity_pass_calls_fetcher(self):
@@ -914,25 +908,25 @@ class CliCacheTests(unittest.TestCase):
         self.assertEqual(result["technologies"][0]["name"], "nginx")
         self.assertIn("Server: nginx", result["technologies"][0]["evidence"])
 
-    def test_null_mode_cache_miss_reports_clean_uncached_error(self):
+    def test_cache_only_miss_reports_clean_uncached_error(self):
         with TemporaryDirectory() as tmpdir:
             db = Path(tmpdir) / "results.db"
-            args = args_for(db, mode="null")
+            args = args_for(db, mode="auto", cache="only")
             with patch("tech_scan.fetch_pipeline.check_target_ports") as sanity_mock:
                 with patch("tech_scan.fetch_pipeline.fetch_requests") as fetch_mock:
                     result = scan_target("example.com", args, ["builtin"], ["builtin"])
 
-        self.assertEqual(result["mode"], "null")
-        self.assertFalse(result["cached"])
-        self.assertEqual(result["cache_lookup"], "miss")
-        self.assertFalse(result["cache_stored"])
-        self.assertEqual(result["cache_reason"], "null-cache-miss")
-        self.assertEqual(result["error"], "null fetch mode cache miss; no cached fetch observation for target")
+        self.assertIsNone(result["fetch_mode"])
+        self.assertNotEqual(result["cache"]["lookup"], "hit")
+        self.assertEqual(result["cache"]["lookup"], "miss")
+        self.assertEqual(result["cache"]["write"], "not_attempted")
+        self.assertEqual(result["cache"]["reason"], "cache-only-miss")
+        self.assertEqual(result["error"], "cache-only miss; no cached fetch observation for target")
         self.assertEqual(result["technologies"], [])
         sanity_mock.assert_not_called()
         fetch_mock.assert_not_called()
 
-    def test_null_mode_uses_cached_requests_observation_for_detection(self):
+    def test_cache_only_uses_cached_requests_observation_for_detection(self):
         with TemporaryDirectory() as tmpdir:
             db = Path(tmpdir) / "results.db"
             fetch = FetchResult(
@@ -952,16 +946,15 @@ class CliCacheTests(unittest.TestCase):
             with patch("tech_scan.fetch_pipeline.fetch_requests") as fetch_mock:
                 result = scan_target(
                     "example.com",
-                    args_for(db, mode="null"),
+                    args_for(db, mode="auto", cache="only"),
                     ["builtin"],
                     ["builtin"],
                 )
 
-        self.assertEqual(result["mode"], "null")
-        self.assertTrue(result["cached"])
-        self.assertEqual(result["cache_lookup"], "hit")
-        self.assertIsNone(result["cache_stored"])
-        self.assertIsNone(result["cache_reason"])
+        self.assertEqual(result["fetch_mode"], "requests")
+        self.assertEqual(result["cache"]["lookup"], "hit")
+        self.assertEqual(result["cache"]["write"], "not_attempted")
+        self.assertIsNone(result["cache"]["reason"])
         self.assertEqual(result["technologies"][0]["name"], "nginx")
         self.sanity_mock.assert_not_called()
         fetch_mock.assert_not_called()

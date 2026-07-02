@@ -37,13 +37,22 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--mode",
-        choices=["requests", "browser", "auto", "null"],
+        choices=["requests", "browser", "auto"],
         default="auto",
         help=(
             "Fetch mode. requests uses a browser-like HTTP request; browser uses Playwright; "
-            "auto tries requests first and falls back to browser for sparse/blocked/JS-heavy pages; "
-            "null performs detection from cache only without network access. "
+            "auto tries requests first and falls back to browser for sparse/blocked/JS-heavy pages. "
             "Default: auto."
+        ),
+    )
+    parser.add_argument(
+        "--cache",
+        choices=["use", "refresh", "only", "off"],
+        default="use",
+        help=(
+            "Cache policy. use reads cache then writes fresh cacheable observations; "
+            "refresh skips lookup and rewrites; only performs no-network detection from cache; "
+            "off disables cache lookup and writes. Default: use."
         ),
     )
     parser.add_argument(
@@ -99,11 +108,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "Seconds before a cached fetch observation expires. "
             "Use a negative value to never expire cached rows. Default: 86400."
         ),
-    )
-    parser.add_argument(
-        "--refresh",
-        action="store_true",
-        help="Ignore cached fetch observations and overwrite them with fresh responses.",
     )
     parser.add_argument(
         "--verbosity",
@@ -176,7 +180,8 @@ def main(argv: list[str] | None = None) -> int:
     targets = [line.strip() for line in sys.stdin if line.strip()]
     color = sys.stdout.isatty() and "NO_COLOR" not in os.environ
     printer = lambda result: print_result(result, args.output, color)
-    if args.mode in {"browser", "auto"}:
+    needs_async_browser_scheduler = args.mode in {"browser", "auto"} and args.cache != "only"
+    if needs_async_browser_scheduler:
         try:
             return asyncio.run(
                 run_browser_or_auto(

@@ -5,7 +5,7 @@ from tempfile import TemporaryDirectory
 
 from tech_scan.cache import (
     FETCH_PROFILE_VERSION,
-    ResponseCache,
+    CacheStore,
     cache_disposition,
     is_cacheable_fetch,
 )
@@ -107,29 +107,28 @@ def make_sanity_fetch(error: str):
 
 class CacheTests(unittest.TestCase):
     def test_fetch_profile_version_bumped_for_requests_header_identity(self):
-        self.assertEqual(FETCH_PROFILE_VERSION, "v7")
+        self.assertEqual(FETCH_PROFILE_VERSION, "v8")
 
     def test_requests_observation_roundtrip(self):
         with TemporaryDirectory() as tmpdir:
-            with ResponseCache(Path(tmpdir) / "results.db") as cache:
+            with CacheStore(Path(tmpdir) / "results.db") as cache:
                 cache.set("https://example.com", "requests", None, make_fetch())
 
                 cached = cache.get("https://example.com", "requests", None, 86400)
 
             self.assertIsNotNone(cached)
             assert cached is not None
-            self.assertTrue(cached.cached)
-            self.assertEqual(cached.final_url, "https://www.example.com")
-            self.assertEqual(cached.status, 200)
-            self.assertEqual(cached.headers, {"server": "Apache"})
-            self.assertEqual(cached.cookies, {"session": "abc"})
-            self.assertIn("https://www.example.com/app.js", cached.script_srcs)
-            self.assertEqual(cached.primary_resource.kind, "document")
-            self.assertEqual(cached.script_resources[0].parent_id, cached.primary_resource_id)
-            self.assertIn("React.version", cached.script_resources[0].body)
-            self.assertIsInstance(cached.primary_resource.cache_created_at, int)
-            self.assertIsInstance(cached.primary_resource.cache_updated_at, int)
-            self.assertIsInstance(cached.script_resources[0].cache_created_at, int)
+            self.assertEqual(cached.observation.final_url, "https://www.example.com")
+            self.assertEqual(cached.observation.status, 200)
+            self.assertEqual(cached.observation.headers, {"server": "Apache"})
+            self.assertEqual(cached.observation.cookies, {"session": "abc"})
+            self.assertIn("https://www.example.com/app.js", cached.observation.script_srcs)
+            self.assertEqual(cached.observation.primary_resource.kind, "document")
+            self.assertEqual(cached.observation.script_resources[0].parent_id, cached.observation.primary_resource_id)
+            self.assertIn("React.version", cached.observation.script_resources[0].body)
+            self.assertIsInstance(cached.observation.primary_resource.cache_created_at, int)
+            self.assertIsInstance(cached.observation.primary_resource.cache_updated_at, int)
+            self.assertIsInstance(cached.observation.script_resources[0].cache_created_at, int)
 
     def test_redirect_observation_roundtrip(self):
         redirect = ResourceObservation(
@@ -166,15 +165,15 @@ class CacheTests(unittest.TestCase):
         )
 
         with TemporaryDirectory() as tmpdir:
-            with ResponseCache(Path(tmpdir) / "results.db") as cache:
+            with CacheStore(Path(tmpdir) / "results.db") as cache:
                 cache.set("http://example.com", "requests", None, fetch)
 
                 cached = cache.get("http://example.com", "requests", None, 86400)
 
         self.assertIsNotNone(cached)
         assert cached is not None
-        self.assertEqual(cached.primary_resource.kind, "document")
-        redirects = [resource for resource in cached.resources if resource.kind == "redirect"]
+        self.assertEqual(cached.observation.primary_resource.kind, "document")
+        redirects = [resource for resource in cached.observation.resources if resource.kind == "redirect"]
         self.assertEqual(len(redirects), 1)
         self.assertEqual(redirects[0].url, "http://example.com")
         self.assertEqual(redirects[0].final_url, "https://example.com")
@@ -182,27 +181,27 @@ class CacheTests(unittest.TestCase):
 
     def test_cached_fetch_url_uses_concrete_cache_target(self):
         with TemporaryDirectory() as tmpdir:
-            with ResponseCache(Path(tmpdir) / "results.db") as cache:
+            with CacheStore(Path(tmpdir) / "results.db") as cache:
                 cache.set("http://example.com", "requests", None, make_fetch())
 
                 cached = cache.get("http://example.com", "requests", None, 86400)
 
             self.assertIsNotNone(cached)
             assert cached is not None
-            self.assertEqual(cached.url, "http://example.com")
-            self.assertEqual(cached.final_url, "https://www.example.com")
+            self.assertEqual(cached.observation.url, "http://example.com")
+            self.assertEqual(cached.observation.final_url, "https://www.example.com")
 
     def test_browser_observation_roundtrip(self):
         with TemporaryDirectory() as tmpdir:
-            with ResponseCache(Path(tmpdir) / "results.db") as cache:
+            with CacheStore(Path(tmpdir) / "results.db") as cache:
                 cache.set("https://example.com", "browser", None, make_fetch("browser"))
 
                 cached = cache.get("https://example.com", "browser", None, 86400)
 
             self.assertIsNotNone(cached)
             assert cached is not None
-            self.assertEqual(cached.browser_globals, ["React", "__NEXT_DATA__"])
-            self.assertEqual(cached.script_srcs, ["https://www.example.com/app.js"])
+            self.assertEqual(cached.observation.browser_globals, ["React", "__NEXT_DATA__"])
+            self.assertEqual(cached.observation.script_srcs, ["https://www.example.com/app.js"])
 
     def test_local_primary_fetcher_error_is_not_cacheable(self):
         disposition = cache_disposition(make_primary_error_fetch())
@@ -211,7 +210,7 @@ class CacheTests(unittest.TestCase):
         self.assertEqual(disposition.reason, "local-client-error")
 
         with TemporaryDirectory() as tmpdir:
-            with ResponseCache(Path(tmpdir) / "results.db") as cache:
+            with CacheStore(Path(tmpdir) / "results.db") as cache:
                 cache.set("https://example.com", "browser", None, make_primary_error_fetch())
 
                 cached = cache.get("https://example.com", "browser", None, 86400)
@@ -250,14 +249,14 @@ class CacheTests(unittest.TestCase):
         self.assertEqual(disposition.reason, "requests-error")
 
         with TemporaryDirectory() as tmpdir:
-            with ResponseCache(Path(tmpdir) / "results.db") as cache:
+            with CacheStore(Path(tmpdir) / "results.db") as cache:
                 cache.set("https://example.com", "requests", None, fetch)
 
                 cached = cache.get("https://example.com", "requests", None, 86400)
 
             self.assertIsNotNone(cached)
             assert cached is not None
-            self.assertEqual(cached.error, error)
+            self.assertEqual(cached.observation.error, error)
 
     def test_sanity_errors_are_cacheable(self):
         cases = [
@@ -283,15 +282,15 @@ class CacheTests(unittest.TestCase):
                 self.assertEqual(disposition.reason, reason)
 
                 with TemporaryDirectory() as tmpdir:
-                    with ResponseCache(Path(tmpdir) / "results.db") as cache:
+                    with CacheStore(Path(tmpdir) / "results.db") as cache:
                         cache.set("https://example.com", "requests", None, fetch)
 
                         cached = cache.get("https://example.com", "requests", None, 86400)
 
                     self.assertIsNotNone(cached)
                     assert cached is not None
-                    self.assertEqual(cached.primary_resource.kind, "sanity")
-                    self.assertEqual(cached.error, error)
+                    self.assertEqual(cached.observation.primary_resource.kind, "sanity")
+                    self.assertEqual(cached.observation.error, error)
 
     def test_http_error_status_is_cacheable(self):
         fetch = make_fetch()
@@ -320,34 +319,34 @@ class CacheTests(unittest.TestCase):
 
         self.assertTrue(is_cacheable_fetch(fetch))
         with TemporaryDirectory() as tmpdir:
-            with ResponseCache(Path(tmpdir) / "results.db") as cache:
+            with CacheStore(Path(tmpdir) / "results.db") as cache:
                 cache.set("https://example.com", "requests", None, fetch)
 
                 cached = cache.get("https://example.com", "requests", None, 86400)
 
             self.assertIsNotNone(cached)
             assert cached is not None
-            self.assertEqual(cached.status, 403)
+            self.assertEqual(cached.observation.status, 403)
 
     def test_ttl_expiry_returns_none(self):
         with TemporaryDirectory() as tmpdir:
-            with ResponseCache(Path(tmpdir) / "results.db") as cache:
+            with CacheStore(Path(tmpdir) / "results.db") as cache:
                 cache.set("https://example.com", "requests", None, make_fetch())
-                cache.conn.execute("UPDATE fetches SET updated_at = ?", (int(time.time()) - 100,))
+                cache.conn.execute("UPDATE fetch_records SET updated_at = ?", (int(time.time()) - 100,))
                 cache.conn.commit()
 
                 self.assertIsNone(cache.get("https://example.com", "requests", None, 1))
 
     def test_provider_set_does_not_affect_cache_lookup(self):
         with TemporaryDirectory() as tmpdir:
-            with ResponseCache(Path(tmpdir) / "results.db") as cache:
+            with CacheStore(Path(tmpdir) / "results.db") as cache:
                 cache.set("https://example.com", "requests", None, make_fetch())
 
                 self.assertIsNotNone(cache.get("https://example.com", "requests", None, 86400))
 
     def test_mode_and_proxy_isolate_cache_rows(self):
         with TemporaryDirectory() as tmpdir:
-            with ResponseCache(Path(tmpdir) / "results.db") as cache:
+            with CacheStore(Path(tmpdir) / "results.db") as cache:
                 cache.set("https://example.com", "requests", "http://proxy:8080", make_fetch())
 
                 self.assertIsNone(cache.get("https://example.com", "requests", None, 86400))
@@ -358,7 +357,7 @@ class CacheTests(unittest.TestCase):
 
     def test_tls_identity_isolates_cache_rows(self):
         with TemporaryDirectory() as tmpdir:
-            with ResponseCache(Path(tmpdir) / "results.db") as cache:
+            with CacheStore(Path(tmpdir) / "results.db") as cache:
                 cache.set(
                     "https://example.com",
                     "requests",
@@ -388,7 +387,7 @@ class CacheTests(unittest.TestCase):
 
     def test_browser_extension_identity_isolates_cache_rows(self):
         with TemporaryDirectory() as tmpdir:
-            with ResponseCache(Path(tmpdir) / "results.db") as cache:
+            with CacheStore(Path(tmpdir) / "results.db") as cache:
                 cache.set(
                     "https://example.com",
                     "browser",
